@@ -45,7 +45,11 @@ cd packages/dsh-promise
       model: jev-1.14.0
 ```
 
-把 key 放进 DSH 进程的环境（不要写进 YAML）：`export TYPESAFE_API_KEY=...`。
+启用后，在 **插件 → dsh-promise → promise 行 → 配置** 里填 Jev 的 Base URL、Model 和 API Key
+（API Key 是 write-only 的 secret 字段，页面只显示保存状态，不回显值；留空表示不修改）。
+也可以继续用 YAML 的 `jev.apiKey` / `jev.baseUrl`，或环境变量 `TYPESAFE_API_KEY` 兜底。
+
+注意：通过页面/YAML 配置的 Key 会以明文写入本机 profile 配置；不想落盘就用环境变量。
 
 没有 key 时插件不会失败：它退化为 L1（规则 + 可执行检查），并在日志里提示一次。
 
@@ -189,9 +193,10 @@ Jev 在没有证据的 state 上会保守（例如只有 diff、没有测试结�
       truncateToBytes: 16384
     jev:
       enabled: true
-      baseUrl: 'https://api.typesafe.ai/v1/systemone'
+      baseUrl: 'https://api.typesafe.ai/v1/systemone'   # 页面可编辑（volatile）
       apiKeyEnv: TYPESAFE_API_KEY
-      model: jev-1.14.0
+      apiKey: ''                                        # 页面可编辑（secret，write-only）
+      model: jev-1.14.0                                 # 页面可编辑（volatile）
       timeoutMs: 20000
     checks:
       allowModelDeclared: false  # 模型声明的 shell 检查默认不执行

@@ -34,12 +34,28 @@ export class JevClient {
    * @param {(level:string, message:string)=>void} [options.logger]
    */
   constructor(options) {
-    this.baseUrl = options.baseUrl
-    this.apiKey = options.apiKey ?? ''
-    this.model = options.model ?? 'jev-latest'
+    // Values may be functions so volatile config edits apply without a remount.
+    this.options = options
     this.timeoutMs = options.timeoutMs ?? 20_000
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch
     this.log = options.logger ?? (() => {})
+  }
+
+  #option(value, fallback) {
+    const resolved = typeof value === 'function' ? value() : value
+    return resolved ?? fallback
+  }
+
+  get baseUrl() {
+    return this.#option(this.options.baseUrl, 'https://api.typesafe.ai/v1/systemone')
+  }
+
+  get apiKey() {
+    return this.#option(this.options.apiKey, '')
+  }
+
+  get model() {
+    return this.#option(this.options.model, 'jev-latest')
   }
 
   get configured() {

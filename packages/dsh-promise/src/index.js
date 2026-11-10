@@ -66,18 +66,22 @@ export function apply(ctx, config) {
   }
 
   const collector = new SessionCollector({ logger: log })
-  const apiKey = process.env[config.jev.apiKeyEnv] ?? ''
+  // Volatile config values are wrappers; read them at use time so a settings
+  // edit applies to the next call without a plugin remount.
+  const readVolatile = (value) => (value && typeof value.get === 'function' ? value.get() : value)
+  const envKey = process.env[config.jev.apiKeyEnv] ?? ''
   const jev = config.jev.enabled
     ? new JevClient({
-      baseUrl: config.jev.baseUrl,
-      apiKey,
-      model: config.jev.model,
+      baseUrl: () => readVolatile(config.jev.baseUrl),
+      apiKey: () => readVolatile(config.jev.apiKey) || envKey,
+      model: () => readVolatile(config.jev.model),
       timeoutMs: config.jev.timeoutMs,
       logger: log,
     })
     : null
+  const apiKey = jev?.apiKey ?? ''
   if (config.jev.enabled && !apiKey) {
-    log('warn', `Jev is enabled but ${config.jev.apiKeyEnv} is empty; semantic assessment is unavailable and L1 still works`)
+    log('warn', `Jev is enabled but neither jev.apiKey nor ${config.jev.apiKeyEnv} is set; semantic assessment is unavailable and L1 still works`)
   }
 
   const engine = new PromiseEngine({ config, ledger, collector, jev, logger: log })

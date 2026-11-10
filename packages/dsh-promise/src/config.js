@@ -54,9 +54,11 @@ export const Config = z.object({
   }).default({}),
   jev: z.object({
     enabled: z.boolean().default(true),
-    baseUrl: z.string().default('https://api.typesafe.ai/v1/systemone'),
+    baseUrl: z.string().default('https://api.typesafe.ai/v1/systemone').volatile(),
     apiKeyEnv: z.string().default('TYPESAFE_API_KEY'),
-    model: z.string().default('jev-1.14.0'),
+    /** Write-only secret; the settings UI never receives the stored value. */
+    apiKey: z.string().role('secret').default('').volatile(),
+    model: z.string().default('jev-1.14.0').volatile(),
     timeoutMs: z.number().min(1000).default(20_000),
   }).default({}),
   checks: z.object({

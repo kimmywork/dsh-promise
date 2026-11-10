@@ -107,3 +107,11 @@ test('tools round-trip through declare, select and settle', async () => {
   assert.deepEqual(validateJsonSchemaValue(settle.output.schema, settled, 'value'), [])
   assert.match(settled.text, /fulfilled/)
 })
+
+test('Jev connection fields are volatile and the key is a secret', () => {
+  const jev = Config.dict.jev.dict
+  assert.equal(jev.apiKey.meta.role, 'secret')
+  assert.equal(jev.apiKey.meta.volatile, true)
+  assert.equal(jev.baseUrl.meta.volatile, true)
+  assert.equal(jev.model.meta.volatile, true)
+})
