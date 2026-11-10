@@ -122,19 +122,26 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
       },
       dialog: {
+        position: 'fixed',
+        top: '56px',
+        right: '24px',
+        left: 'auto',
+        bottom: 'auto',
+        margin: 0,
         padding: 0,
         border: 0,
         background: 'transparent',
         color: 'inherit',
-        width: 'auto',
-        maxWidth: 'none',
-        maxHeight: 'none',
+        width: '380px',
+        maxWidth: 'calc(100vw - 32px)',
+        maxHeight: 'calc(100vh - 80px)',
         overflow: 'visible',
       },
       panel: {
         position: 'relative',
-        width: '380px',
-        maxHeight: '440px',
+        boxSizing: 'border-box',
+        width: '100%',
+        maxHeight: 'min(440px, calc(100vh - 96px))',
         overflow: 'auto',
         padding: '10px',
         borderRadius: '10px',
@@ -374,6 +381,9 @@ window.__ModuleLoader__.load({
           ref: dialogRef,
           'data-promise-credits': 'dialog',
           style: styles.dialog,
+          onClick: (event) => {
+            if (event.target === event.currentTarget) closePanel()
+          },
         }, [
           react.createElement('div', {
             key: 'panel',
@@ -479,8 +489,20 @@ window.__ModuleLoader__.load({
 
     const inject = ['slots', 'locale']
 
+    function ensurePanelStyle() {
+      if (typeof document === 'undefined' || document.getElementById('dsh-promise-credits-style')) return undefined
+      const style = document.createElement('style')
+      style.id = 'dsh-promise-credits-style'
+      // A header popover should not dim the whole app; the dialog is only used
+      // for top-layer positioning, not for modality.
+      style.textContent = 'dialog[data-promise-credits]::backdrop{background:transparent}'
+      document.head.appendChild(style)
+      return () => style.remove()
+    }
+
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-promise: dictionaries')
+      ctx.effect(() => ensurePanelStyle(), 'dsh-promise: credit panel style')
       const t = ctx.locale.bind(NS)
 
       // The credit panel needs the Client Remote face. Wait for it separately so
