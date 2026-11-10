@@ -166,11 +166,12 @@ export function apply(ctx, config) {
   // The model may delegate with its own tools (spawn_teammate/send_message/subagent).
   // Post-execute carries the canonical result, including the child identity, so an
   // open job opened by promise_select can be bound to that child without a new tool.
-  ctx.on('tools/post-execute', (exec, result, next) => {
+  ctx.on('tools/post-execute', async (exec, result, next) => {
+    let boundJobId = null
     try {
       if (result && result.isError === false) {
         const sessionId = exec?.agent?.session?.id
-        engine.bindToolDelegation({
+        boundJobId = engine.bindToolDelegation({
           toolName: exec?.name,
           args: exec?.arguments ?? {},
           value: result.value,
@@ -182,7 +183,18 @@ export function apply(ctx, config) {
     } catch (error) {
       log('warn', `delegation binding failed: ${error?.message ?? error}`)
     }
-    return next()
+    const decision = await next()
+    if (!boundJobId || config.ui?.annotateDelegation === false) return decision
+    if (decision?.kind !== 'accept' || decision.content !== undefined || decision.value !== undefined) return decision
+    try {
+      const job = engine.state.jobs.get(boundJobId)
+      if (!job) return decision
+      const line = `↳ promise ${job.capability} · job ${boundJobId} · L${job.level} — bound automatically; settlement will be recorded`
+      return { ...decision, content: [...(result.content ?? []), { type: 'text', text: line }] }
+    } catch (error) {
+      log('warn', `delegation annotation failed: ${error?.message ?? error}`)
+      return decision
+    }
   })
 
   ctx.on('dispose', () => {

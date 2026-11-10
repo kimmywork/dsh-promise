@@ -84,6 +84,10 @@ export const Config = z.object({
   attribution: z.object({
     signalWeight: z.number().min(0).max(1).default(0.5),
   }).default({}),
+  ui: z.object({
+    /** Append a short promise line to delegation tool results (tool-card feedback). */
+    annotateDelegation: z.boolean().default(true),
+  }).default({}),
   redaction: z.object({
     enabled: z.boolean().default(true),
     stripPatterns: z.array(z.string()).default(DEFAULT_STRIP_PATTERNS),

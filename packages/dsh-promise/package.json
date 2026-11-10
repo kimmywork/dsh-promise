@@ -16,7 +16,8 @@
     "examples",
     "cordis.patch.yml",
     "README.md",
-    "install.sh"
+    "install.sh",
+    "docs"
   ],
   "license": "MIT",
   "engines": {

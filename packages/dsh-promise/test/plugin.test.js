@@ -4,7 +4,7 @@ import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import { apply, Config, inject, name } from '../src/index.js'
 import { tempDir } from './helpers.js'
 
-function fakeContext() {
+function fakeContext(services = {}) {
   const tools = []
   const sections = []
   const handlers = []
@@ -12,6 +12,7 @@ function fakeContext() {
     tools: { register: (tool) => { tools.push(tool); return () => {} } },
     systemPrompt: { section: (section) => { sections.push(section); return () => {} } },
     on: (event, handler) => { handlers.push({ event, handler }); return () => {} },
+    get: (name) => services[name],
     logger: () => ({ warn: () => {}, info: () => {} }),
   }
   return { ctx, tools, sections, handlers }
@@ -115,4 +116,32 @@ test('Jev connection fields are volatile and the key is a secret', () => {
   assert.equal(jev.apiKey.meta.volatile, true)
   assert.equal(jev.baseUrl.meta.volatile, true)
   assert.equal(jev.model.meta.volatile, true)
+})
+
+
+test('a bound delegation result carries a promise annotation for the tool card', async () => {
+  const teams = {
+    listMembers: () => [{ id: 'solo-session', name: 'solo', status: 'running' }],
+    sendMessage: async () => ({}),
+    spawnTeammate: async () => ({}),
+  }
+  const { ctx, tools, handlers } = fakeContext({ agentTeams: teams })
+  apply(ctx, Config({ dataDir: tempDir(), jev: { enabled: false } }))
+  const declare = tools.find((tool) => tool.name === 'promise_declare')
+  await declare.execute({ agent: 'team:solo', capability: 'code.solo', statement: 'do the delegated task' }, {})
+
+  const handler = handlers.find((entry) => entry.event === 'tools/post-execute').handler
+  const exec = {
+    name: 'spawn_teammate',
+    arguments: { name: 'solo', prompt: 'do it' },
+    agent: { session: { id: 'sess-ui' } },
+  }
+  const result = {
+    isError: false,
+    content: [{ type: 'text', text: '{"member":{"target":"solo"}}' }],
+    value: { member: { target: 'solo', status: 'running' } },
+  }
+  const decision = await handler(exec, result, async () => ({ kind: 'accept' }))
+  assert.equal(decision.kind, 'accept')
+  assert.ok(decision.content.some((block) => block.type === 'text' && block.text.includes('promise code.solo')))
 })
