@@ -1158,3 +1158,6 @@ jev:
 | 双采样「跨阈值」不等于不稳定 | 0.69 与 0.71 跨过 0.70，但差距只有噪声 | `unstable` 只在两次相差 ≥ 0.15 时成立；否则用均值裁决 |
 | score 的 confidence 偏低 | 正确 diff 的 absolute 3.4/4 只有 conf 0.25 | 只做权重（0.5+0.5c），不做否决；校准报告里的 confidence error 会偏高，属预期 |
 | 3 条样本可跑通校准闭环 | `examples/calibration-sample.jsonl`：accuracy 1.0、κ 1、false-pass 0（仅作格式演示） | 真实门槛仍需 100 条人工标注 |
+| 读时衰减不能只写在公式里 | 早期实现只在「有新证据」时衰减，停更的高分代理会永远赢路由 | `trustView` 在读时按 `now` 衰减；引擎每次查询传入当前时间 |
+| 模型会把自查命令标成 `source:"config"` | 安全检查门形同虚设（字段由模型控制） | 引擎强制 `source = declaredBy === 'system' ? 'config' : 'model'`，并加测试 |
+| 工具输出里的 `undefined/null` 会被真实 registry 拒绝 | 本地假 ctx 测不出来 | 输出前 `clean()` 去空；测试用 `validateJsonSchemaValue` 校验每个工具的 output schema |

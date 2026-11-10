@@ -62,3 +62,15 @@ test('trustView separates assessors and aggregates them', () => {
   assert.ok(view.score > 0.5 && view.score < 0.9)
   assert.equal(trustView(map, 'preset:a', 'other.capability').count, 0)
 })
+
+test('read-time decay drifts a stale high score back toward the prior', () => {
+  const updatedAt = Date.now() - 14 * 86_400_000
+  const map = new Map()
+  map.set(recordKey('preset:a', 'code.change', 'judge:jev'), { score: 0.95, mass: 8, count: 10, updatedAt })
+  const fresh = trustView(map, 'preset:a', 'code.change')
+  const stale = trustView(map, 'preset:a', 'code.change', 0.5, { now: Date.now(), halfLifeDays: 14 })
+  assert.equal(fresh.score, 0.95)
+  assert.ok(stale.score < fresh.score)
+  assert.ok(stale.score > 0.5)
+  assert.ok(stale.mass < fresh.mass)
+})

@@ -41,7 +41,7 @@ export class PromiseEngine {
   }
 
   trustFor(agent, capability) {
-    return trustView(this.state.trust, agent, capability, this.config.trust.prior)
+    return trustView(this.state.trust, agent, capability, this.config.trust.prior, { now: Date.now(), halfLifeDays: this.config.trust.halfLifeDays })
   }
 
   promisesFor(capability) {
@@ -74,21 +74,23 @@ export class PromiseEngine {
       qos: normalizeQos(input.qos),
       requirements: normalizeRequirements(input.requirements),
       rules: Array.isArray(input.rules) ? input.rules : [],
-      checks: normalizeChecks(input.checks),
+      checks: normalizeChecks(input.checks, declaredBy),
       assessment: normalizeAssessment(input.assessment, this.config),
       signals: normalizeSignals(input.signals),
-      status: input.status === 'draft'
-        ? 'draft'
-        : existing?.status && existing.status !== 'retired'
-          ? existing.status
-          : 'active',
+      status: input.status === 'active'
+        ? 'active'
+        : input.status === 'draft'
+          ? 'draft'
+          : existing?.status && existing.status !== 'retired'
+            ? existing.status
+            : 'active',
       version: (existing?.version ?? 0) + 1,
       declaredBy,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     }
     if (record.checks.length > 0 && !this.config.checks.allowModelDeclared) {
-      warnings.push('checks are declared by the model; they will not execute until checks.allowModelDeclared=true or the check is marked source:"config"')
+      warnings.push('checks stay inert until checks.allowModelDeclared=true and the command matches checks.allowlist')
     }
     if (record.rules.length === 0 && record.checks.length === 0 && record.assessment.policy === 'L0') {
       warnings.push('promise has no rules, checks or semantic policy; trust will not accumulate')
@@ -656,18 +658,18 @@ export class PromiseEngine {
   #compositionHealth(children) {
     let mass = 0
     let weighted = 0
-    let min = 1
+    let weakest = 0.5
     for (const child of children) {
       const view = this.trustFor(child.agent, child.capability)
       if (view.count === 0) continue
       mass += view.mass
       weighted += view.lower * view.mass
-      min = Math.min(min, view.lower)
+      weakest = Math.min(weakest, view.lower)
     }
     return {
       estimate: true,
       score: mass > 0 ? weighted / mass : 0.5,
-      weakest: min,
+      weakest,
       evidenceMass: mass,
       note: 'estimate only: rolled up from child trust, not the composition’s own record',
     }
@@ -791,14 +793,16 @@ function normalizeRequirements(requirements) {
     .map((requirement) => ({ id: String(requirement.id), text: String(requirement.text) }))
 }
 
-function normalizeChecks(checks) {
+function normalizeChecks(checks, declaredBy = 'agent') {
   if (!Array.isArray(checks)) return []
   return checks
     .filter((check) => check && typeof check.run === 'string')
     .map((check) => ({
       id: String(check.id ?? check.run).slice(0, 64),
       run: String(check.run).slice(0, 512),
-      source: check.source === 'config' ? 'config' : 'model',
+      // A model-declared check can never promote itself to "config": the model
+      // controls this field, so trusting it would make the gate meaningless.
+      source: declaredBy === 'system' ? 'config' : 'model',
       timeoutMs: Number.isFinite(check.timeoutMs) ? check.timeoutMs : undefined,
     }))
 }

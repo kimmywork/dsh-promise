@@ -3,51 +3,142 @@
     "agent": "preset:developer",
     "capability": "code.change",
     "statement": "Given a clear change request or a failing test, deliver a minimal diff: existing tests pass, new behavior has a test, only in-scope modules change, and unresolved risks are reported.",
-    "qos": { "requiredFormat": "diff", "minQuality": 0.7, "maxLatencyMs": 1800000 },
+    "qos": {
+      "requiredFormat": "diff",
+      "minQuality": 0.7,
+      "maxLatencyMs": 1800000
+    },
     "requirements": [
-      { "id": "tests_pass", "text": "existing and new tests pass" },
-      { "id": "in_scope", "text": "only files relevant to the request changed" },
-      { "id": "risk_reported", "text": "unresolved risks or limitations are stated" }
+      {
+        "id": "tests_pass",
+        "text": "existing and new tests pass"
+      },
+      {
+        "id": "in_scope",
+        "text": "only files relevant to the request changed"
+      },
+      {
+        "id": "risk_reported",
+        "text": "unresolved risks or limitations are stated"
+      }
     ],
     "rules": [
-      { "id": "scope", "kind": "files-within", "globs": ["src/**", "test/**", "packages/**"] },
-      { "id": "secrets", "kind": "no-match", "pattern": "sk-[A-Za-z0-9]{16,}" }
+      {
+        "id": "scope",
+        "kind": "files-within",
+        "globs": [
+          "src/**",
+          "test/**",
+          "packages/**"
+        ]
+      },
+      {
+        "id": "secrets",
+        "kind": "no-match",
+        "pattern": "sk-[A-Za-z0-9]{16,}"
+      }
     ],
     "checks": [
-      { "id": "tests", "run": "pnpm test -- --run", "source": "config", "timeoutMs": 600000 },
-      { "id": "typecheck", "run": "pnpm tsc -p . --noEmit", "source": "config", "timeoutMs": 300000 }
+      {
+        "id": "tests",
+        "run": "pnpm test -- --run",
+        "timeoutMs": 600000
+      },
+      {
+        "id": "typecheck",
+        "run": "pnpm tsc -p . --noEmit",
+        "timeoutMs": 300000
+      }
     ],
-    "assessment": { "policy": "L2", "sampleRate": 0.3, "passThreshold": 0.7 },
-    "signals": { "tool": ["bash", "write", "edit"] }
+    "assessment": {
+      "policy": "L2",
+      "sampleRate": 0.3,
+      "passThreshold": 0.7
+    },
+    "signals": {
+      "tool": [
+        "bash",
+        "write",
+        "edit"
+      ]
+    }
   },
   {
     "agent": "preset:developer",
     "capability": "code.review",
     "statement": "Given a diff, produce a structured review: every finding carries file:line and severity, no claims about unread code, and an explicit 'no findings' when clean.",
-    "qos": { "requiredFormat": "json", "minQuality": 0.7, "maxLatencyMs": 600000 },
+    "qos": {
+      "requiredFormat": "json",
+      "minQuality": 0.7,
+      "maxLatencyMs": 600000
+    },
     "requirements": [
-      { "id": "line_refs", "text": "every finding includes file:line" },
-      { "id": "no_fabrication", "text": "no findings about code that is not in the diff" }
+      {
+        "id": "line_refs",
+        "text": "every finding includes file:line"
+      },
+      {
+        "id": "no_fabrication",
+        "text": "no findings about code that is not in the diff"
+      }
     ],
     "rules": [
-      { "id": "json", "kind": "json-schema", "required": ["findings"] }
+      {
+        "id": "json",
+        "kind": "json-schema",
+        "required": [
+          "findings"
+        ]
+      }
     ],
-    "assessment": { "policy": "L3", "passThreshold": 0.75 },
-    "signals": { "tool": ["read", "grep"] }
+    "assessment": {
+      "policy": "L3",
+      "passThreshold": 0.75
+    },
+    "signals": {
+      "tool": [
+        "read",
+        "grep"
+      ]
+    }
   },
   {
     "agent": "preset:researcher",
     "capability": "research.brief",
     "statement": "Given a topic, produce a sourced brief within ten minutes: every key number has a source link and uncertainty is marked.",
-    "qos": { "requiredFormat": "markdown", "maxLatencyMs": 600000 },
+    "qos": {
+      "requiredFormat": "markdown",
+      "maxLatencyMs": 600000
+    },
     "requirements": [
-      { "id": "sources", "text": "key claims carry source links" },
-      { "id": "uncertainty", "text": "open questions and conflicting sources are marked" }
+      {
+        "id": "sources",
+        "text": "key claims carry source links"
+      },
+      {
+        "id": "uncertainty",
+        "text": "open questions and conflicting sources are marked"
+      }
     ],
     "rules": [
-      { "id": "sections", "kind": "required-sections", "headings": ["Sources", "Open questions"] }
+      {
+        "id": "sections",
+        "kind": "required-sections",
+        "headings": [
+          "Sources",
+          "Open questions"
+        ]
+      }
     ],
-    "assessment": { "policy": "L2", "sampleRate": 0.2 },
-    "signals": { "tool": ["web_search", "web_fetch"] }
+    "assessment": {
+      "policy": "L2",
+      "sampleRate": 0.2
+    },
+    "signals": {
+      "tool": [
+        "web_search",
+        "web_fetch"
+      ]
+    }
   }
 ]

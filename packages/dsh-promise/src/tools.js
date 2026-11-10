@@ -9,6 +9,20 @@ const string = (description, extra = {}) => ({ type: 'string', description, ...e
 const number = (description) => ({ type: 'number', description })
 const integer = (description) => ({ type: 'integer', description })
 
+/** Drop undefined/null object fields so tool output stays lossless JSON. */
+function clean(value) {
+  if (Array.isArray(value)) return value.map(clean)
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry === undefined || entry === null) continue
+      out[key] = clean(entry)
+    }
+    return out
+  }
+  return value
+}
+
 const OBJECT = (properties, required = true) => ({ type: 'object', additionalProperties: false, properties })
 
 const stringArray = (description, itemDescription = '') => ({
@@ -135,7 +149,7 @@ export function buildTools(engine, collector, log) {
       const { promise, warnings } = engine.declare(args, { declaredBy: 'agent' })
       const text = `promise ${promise.id} v${promise.version} (${promise.status}) for ${promise.agent} · ${promise.capability}`
         + (warnings.length > 0 ? `\nwarnings:\n- ${warnings.join('\n- ')}` : '')
-      return Promise.resolve({ promiseId: promise.id, version: promise.version, status: promise.status, warnings, text })
+      return Promise.resolve(clean({ promiseId: promise.id, version: promise.version, status: promise.status, warnings, text }))
     },
   })
 
@@ -201,7 +215,7 @@ export function buildTools(engine, collector, log) {
         }
         if (result.guidance) lines.push(result.guidance)
       }
-      return Promise.resolve({
+      return Promise.resolve(clean({
         jobId: result.jobId,
         hasCandidate: Boolean(result.recommended),
         promiseId: result.recommended?.promiseId,
@@ -224,7 +238,7 @@ export function buildTools(engine, collector, log) {
         })),
         guidance: result.guidance,
         text: lines.join('\n'),
-      })
+      }))
     },
   })
 
@@ -244,6 +258,9 @@ export function buildTools(engine, collector, log) {
         additionalProperties: false,
         properties: {
           jobId: string('job id', { required: true }),
+          agent: string('agent that held the promise'),
+          capability: string('capability'),
+          levelReasons: { ...stringArray('why this level') },
           verdict: string('fulfilled, violated or undetermined', { required: true }),
           level: integer('assessment level', { required: true }),
           confidence: number('confidence'),
@@ -311,7 +328,7 @@ export function buildTools(engine, collector, log) {
       if (result.breach && result.breach.action !== 'none') lines.push(`breach action: ${result.breach.action} — ${result.breach.reason}`)
       if (result.recovery) lines.push(`probation ${result.recovery.action} (${result.recovery.passes})`)
       if (result.note) lines.push(result.note)
-      return { ...result, text: lines.join('\n') }
+      return clean({ ...result, text: lines.join('\n') })
     },
   })
 
@@ -343,7 +360,7 @@ export function buildTools(engine, collector, log) {
     }),
     execute(args) {
       const result = engine.inspect(args)
-      return Promise.resolve({ what: result.what, text: result.text })
+      return Promise.resolve(clean({ what: result.what, text: result.text }))
     },
   })
 
@@ -423,13 +440,13 @@ export function buildTools(engine, collector, log) {
       const text = `composition ${result.composition.id} · external promise ${result.externalPromise.id}\n`
         + `children: ${result.composition.children.map((child) => `${child.agent}(${child.capability})`).join(', ') || 'none'}\n`
         + `health estimate ${health.score.toFixed(2)} (weakest ${health.weakest.toFixed(2)}, mass ${health.evidenceMass.toFixed(1)}) — ${health.note}`
-      return Promise.resolve({
+      return Promise.resolve(clean({
         compositionId: result.composition.id,
         externalPromiseId: result.externalPromise.id,
         health,
         warnings: result.warnings,
         text,
-      })
+      }))
     },
   })
 

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import { apply, Config, inject, name } from '../src/index.js'
 import { tempDir } from './helpers.js'
 
@@ -94,12 +95,15 @@ test('tools round-trip through declare, select and settle', async () => {
     rules: [{ id: 'scope', kind: 'files-within', globs: ['src/**'] }],
   }, exec)
   assert.ok(declared.promiseId)
+  assert.deepEqual(validateJsonSchemaValue(declare.output.schema, declared, 'value'), [])
 
   const selected = await select.execute({ capability: 'code.change', need: 'fix the bug', riskTier: 1 }, exec)
   assert.ok(selected.jobId)
   assert.equal(selected.hasCandidate, true)
+  assert.deepEqual(validateJsonSchemaValue(select.output.schema, selected, 'value'), [])
 
   const settled = await settle.execute({ jobId: selected.jobId, outcome: 'success', output: 'diff' }, exec)
   assert.equal(settled.verdict, 'fulfilled')
+  assert.deepEqual(validateJsonSchemaValue(settle.output.schema, settled, 'value'), [])
   assert.match(settled.text, /fulfilled/)
 })

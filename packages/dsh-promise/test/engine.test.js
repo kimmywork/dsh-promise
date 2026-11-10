@@ -87,13 +87,15 @@ test('model-declared checks stay inert unless the operator opts in', async () =>
     agent: 'preset:developer',
     capability: 'code.change',
     statement: 'deliver a diff that passes the declared checks',
-    checks: [{ id: 'pass', run: 'true' }],
+    // The model claims the check is trusted config; it must still be inert.
+    checks: [{ id: 'pass', run: 'true', source: 'config' }],
     assessment: { policy: 'L1' },
   })
   feedTurn(engine.collector, SESSION, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/a.js' } }], assistant: 'done' })
   const selected = engine.select({ capability: 'code.change', need: 'fix it', riskTier: 1 }, { sessionId: SESSION.id, turn: 1 })
   const result = await engine.settle({ jobId: selected.jobId, outcome: 'success', output: 'diff' }, { sessionId: SESSION.id, turn: 1 })
   assert.equal(result.verdict, 'undetermined')
+  assert.equal([...engine.state.promises.values()][0].checks[0].source, 'model')
   assert.ok(result.rules.some((rule) => rule.skipped))
 })
 

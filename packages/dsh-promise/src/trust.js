@@ -97,14 +97,33 @@ export function splitKey(key) {
 }
 
 /**
+ * Apply read-time decay: an agent that stops being verified drifts back toward
+ * "unknown" even when no new evidence arrives. Without this, a stale high score
+ * would win routing forever.
+ */
+export function decayRecord(record, now, halfLifeDays, prior) {
+  if (!Number.isFinite(now) || !Number.isFinite(record.updatedAt)) return record
+  const decay = decayFactor(now - record.updatedAt, halfLifeDays)
+  return {
+    ...record,
+    mass: record.mass * decay,
+    score: prior + (record.score - prior) * decay,
+  }
+}
+
+/**
  * Resolve the trust view for one (agent, capability): aggregate across
  * assessors, then add the Wilson lower bound used by routing.
+ * @param {number} [options.now] when supplied, records decay to this instant
+ * @param {number} [options.halfLifeDays]
  */
-export function trustView(trustMap, agent, capability, prior = 0.5) {
+export function trustView(trustMap, agent, capability, prior = 0.5, options = {}) {
   const records = []
   for (const [key, record] of trustMap) {
     const parts = splitKey(key)
-    if (parts.agent === agent && parts.capability === capability) records.push(record)
+    if (parts.agent === agent && parts.capability === capability) {
+      records.push(options.now ? decayRecord(record, options.now, options.halfLifeDays ?? 14, prior) : record)
+    }
   }
   const combined = aggregate(records, prior)
   const n = effectiveN(combined.mass)

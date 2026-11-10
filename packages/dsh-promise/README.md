@@ -15,7 +15,7 @@
 ## 状态
 
 - P0，Node ≥ 20.11，纯 ESM，无构建步骤。
-- 81 个离线单元测试（`npm test`），不触网。
+- 82 个离线单元测试（`npm test`），不触网。
 - `tools/calibrate.js` 用于在真实数据上校准评估器；**未校准前不要让语义证据单独决定信任**（见下文）。
 
 ---
@@ -205,7 +205,7 @@ Jev 在没有证据的 state 上会保守（例如只有 diff、没有测试结�
 
 ### 安全边界
 
-- **checks 默认惰性**：`promise_declare` 是模型调用的，所以模型声明的 shell 命令默认不执行；需要 `checks.allowModelDeclared: true` 且命令命中 `allowlist`，或声明时标 `source: "config"`。
+- **checks 默认惰性**：`promise_declare` 是模型调用的，所以模型声明的 shell 命令默认不执行；需要 `checks.allowModelDeclared: true` 且命令命中 `allowlist`。模型无法把自查命令标成「受信任配置」——`source` 字段由引擎强制为 `model`。
 - **外发内容可控**：默认 redaction + 24KB 截断；`maxStateBytes` 可在无 Jev 的场景下调到很小。
 - **key 不入账本、不入日志**：只从环境变量读；账本记录响应里的 model 名与 token 用量。
 - **账本只读降级**：链校验失败时进入只读模式，仍可 inspect，但不改信任。
@@ -265,7 +265,7 @@ src/
   collector.js   会话事件采集
   tools.js       五个模型侧工具
   prompt.js      静态协议段（无承诺时为空）
-test/            81 个离线测试
+test/            82 个离线测试
 tools/           calibrate.js
 examples/        示例承诺
 ```
@@ -275,5 +275,5 @@ examples/        示例承诺
 ## 测试
 
 ```bash
-npm test          # 81 tests, 无网络
+npm test          # 82 tests, 无网络
 ```
