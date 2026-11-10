@@ -422,8 +422,14 @@ export class PromiseEngine {
 
     const tools = this.collector.toolsInTurn(sessionId, turn)
     if (tools.length === 0) return { settled: 0 }
-    const candidates = [...this.state.promises.values()].filter((promise) => {
-      if (promise.status !== 'active') return false
+    // Generic tools (read/grep/bash/edit) appear in ordinary turns, so signal
+    // attribution is opt-in; otherwise a normal turn could be judged against a
+    // promise it never attempted.
+    const optedIn = [...this.state.promises.values()].filter(
+      (promise) => promise.status === 'active' && promise.signals?.autoAttribute === true,
+    )
+    if (optedIn.length === 0) return { settled: 0 }
+    const candidates = optedIn.filter((promise) => {
       const signals = promise.signals?.tool ?? []
       return signals.some((tool) => tools.includes(tool))
     })
@@ -810,6 +816,7 @@ function normalizeChecks(checks, declaredBy = 'agent') {
 function normalizeSignals(signals = {}) {
   return {
     tool: Array.isArray(signals?.tool) ? signals.tool.filter((tool) => typeof tool === 'string') : [],
+    autoAttribute: signals?.autoAttribute === true,
   }
 }
 

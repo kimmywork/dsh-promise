@@ -117,6 +117,7 @@ export function buildTools(engine, collector, log) {
       },
       signals: OBJECT({
         tool: stringArray('tool names whose calls are evidence for this promise', 'tool name'),
+        autoAttribute: { type: 'boolean', description: 'opt in to attributing whole turns that used these tools' },
       }, false),
       status: string('draft keeps the promise out of routing', { enum: ['active', 'draft'] }),
     },

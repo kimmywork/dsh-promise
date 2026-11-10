@@ -155,8 +155,8 @@ test('auto settlement closes an open job at turn end', async () => {
 
 test('ambiguous auto attribution is recorded but does not touch trust', async () => {
   const { engine } = makeEngine()
-  engine.declare({ agent: 'preset:a', capability: 'code.change', statement: 'deliver a diff that passes tests', signals: { tool: ['bash'] } })
-  engine.declare({ agent: 'preset:b', capability: 'code.review', statement: 'review a diff and report findings', signals: { tool: ['bash'] } })
+  engine.declare({ agent: 'preset:a', capability: 'code.change', statement: 'deliver a diff that passes tests', signals: { tool: ['bash'], autoAttribute: true } })
+  engine.declare({ agent: 'preset:b', capability: 'code.review', statement: 'review a diff and report findings', signals: { tool: ['bash'], autoAttribute: true } })
   feedTurn(engine.collector, SESSION, { turn: 1, tools: [{ name: 'bash', args: { command: 'pnpm test' } }], assistant: 'done' })
   const result = await engine.autoSettle(SESSION.id, 1)
   assert.equal(result.unattributed, true)
@@ -214,4 +214,15 @@ test('settle tool output validates when semantic metadata is present', async () 
   )
   assert.equal(result.verdict, 'fulfilled')
   assert.deepEqual(validateJsonSchemaValue(settleTool.output.schema, result, 'value'), [])
+})
+
+
+test('signal attribution is off unless the promise opts in', async () => {
+  const { engine } = makeEngine()
+  engine.declare({ agent: 'preset:a', capability: 'code.change', statement: 'deliver a diff that passes tests', signals: { tool: ['bash'] } })
+  feedTurn(engine.collector, SESSION, { turn: 1, tools: [{ name: 'bash', args: { command: 'ls' } }], assistant: 'done' })
+  const result = await engine.autoSettle(SESSION.id, 1)
+  assert.equal(result.settled, 0)
+  assert.equal(engine.state.counters.observations, 0)
+  assert.equal(engine.state.jobs.size, 0)
 })

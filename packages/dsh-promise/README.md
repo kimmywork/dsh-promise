@@ -154,7 +154,7 @@ Jev 在没有证据的 state 上会保守（例如只有 diff、没有测试结�
 插件监听 `session/event`，采集：工具调用与结果、assistant 自述、turn 边界、`feedback/message-put`、以及子会话的事件。
 
 - 显式 `promise_select` 打开的 job，在 `turn/end` 自动结算（L1；宿主检查默认不在自动结算时跑，避免副作用）。
-- 没有显式 job 时，按 `signals.tool` 做归属：**只有一个候选**才建 job，且证据权重 ×0.5；多个候选只记 `observation/unattributed`，**不改信任**。
+- 没有显式 job 时，只有声明了 `signals.autoAttribute: true` 的承诺才参与按 `signals.tool` 的自动归属：**只有一个候选**才建 job，且证据权重 ×0.5；多个候选只记 `observation/unattributed`，**不改信任**。默认关闭，因为 `read/grep/bash/edit` 这类通用工具会出现在普通回合里，误归属比漏采更贵。
 - 同一 `(session, turn)` 去重；显式 `promise_settle` 可以补全已自动结算的语义层。
 
 采集面尽量宽，写入信任的入口保持窄——错误归属比漏采更贵。
