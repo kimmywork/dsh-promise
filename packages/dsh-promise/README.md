@@ -15,7 +15,7 @@
 ## 状态
 
 - P0，Node ≥ 20.11，纯 ESM，无构建步骤。
-- 109 个离线单元测试（`npm test`），不触网。
+- 112 个离线单元测试（`npm test`），不触网。
 - `tools/calibrate.js` 用于在真实数据上校准评估器；**未校准前不要让语义证据单独决定信任**（见下文）。
 
 ### 0.1.1 修复的启动故障
@@ -80,6 +80,8 @@ promise_settle   → 手动结算（自己干的活，或绑定失败时兜底�
 promise_inspect  → 信任、承诺、违约、账本
 promise_compose  → 把多个子代理封装成一个外部承诺
 ```
+
+同一 teammate 的后续 `send_message` 会复用已打开的 job，不会被当成新的承诺，也不会重复增加证据。
 
 ### 委派绑定发生在哪一步
 
@@ -344,7 +346,7 @@ src/
   collector.js   会话事件采集
   tools.js       五个模型侧工具
   prompt.js      静态协议段（无承诺时为空）
-test/            109 个离线测试
+test/            112 个离线测试
 tools/           calibrate.js
 examples/        示例承诺
 ```

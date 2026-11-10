@@ -667,7 +667,21 @@ export class PromiseEngine {
     }
     if (!agentId || !link) return null
 
-    let candidates = [...this.state.jobs.values()].filter(
+    // A follow-up message to the same child is a continuation of the same
+    // delegation, not a new promise job. Reuse the open linked job so the child
+    // is settled once and the first job cannot be orphaned.
+    const linked = [...this.state.jobs.values()].filter(
+      (job) =>
+        job.sessionId === callerSessionId &&
+        job.agent === agentId &&
+        !job.closedAt &&
+        job.delegation &&
+        String(job.delegation.sessionId) === String(link.sessionId),
+    )
+    if (linked.length === 1) return linked[0].id
+    if (linked.length > 1) return null
+
+    const candidates = [...this.state.jobs.values()].filter(
       (job) => job.sessionId === callerSessionId && job.agent === agentId && !job.closedAt && !job.delegation,
     )
     if (candidates.length === 0) {
@@ -679,13 +693,16 @@ export class PromiseEngine {
       if (promises.length === 1) {
         const promise = promises[0]
         const request = String(args.prompt ?? args.message ?? '').trim() || promise.statement
-        candidates = [this.#openImplicitJob({
+        const job = this.#openImplicitJob({
           promise,
           request,
           sessionId: callerSessionId,
           turn: this.collector.lastTurn(callerSessionId),
-        })]
+        })
+        this.linkDelegation(job.id, link)
+        return job.id
       }
+      return null
     }
     if (candidates.length !== 1) return null
     this.linkDelegation(candidates[0].id, link)

@@ -538,6 +538,42 @@ test('spawn_teammate opens the job implicitly when the agent has one active prom
   engine.watchers.clear()
 })
 
+test('a follow-up message to the same child reuses the open implicit job', () => {
+  const { engine, collector } = makeEngine()
+  engine.declare({
+    agent: 'team:solo2',
+    capability: 'code.solo2',
+    statement: 'do the delegated task and report the result',
+  })
+  const teams = {
+    listMembers: () => [{ id: 'solo2-session', name: 'solo2', status: 'running' }],
+    sendMessage: async () => ({}),
+    spawnTeammate: async () => ({}),
+  }
+  const first = engine.bindToolDelegation({
+    toolName: 'spawn_teammate',
+    args: { name: 'solo2', prompt: 'first task' },
+    value: { member: { target: 'solo2', status: 'running' } },
+    callerSessionId: SESSION.id,
+    callerAgent: { session: SESSION },
+    teams,
+  })
+  assert.ok(first)
+  const second = engine.bindToolDelegation({
+    toolName: 'send_message',
+    args: { target: 'solo2', message: 'one more detail' },
+    value: {},
+    callerSessionId: SESSION.id,
+    callerAgent: { session: SESSION },
+    teams,
+  })
+  assert.equal(second, first)
+  assert.equal(engine.state.jobs.size, 1)
+  assert.equal(engine.state.jobs.get(first).delegation.sessionId, 'solo2-session')
+  for (const timer of engine.watchers.values()) clearInterval(timer)
+  engine.watchers.clear()
+})
+
 test('spawn_teammate stays unbound when the agent has several promises', () => {
   const { engine } = makeEngine()
   engine.declare({ agent: 'team:multi', capability: 'code.one', statement: 'first capability of this agent' })

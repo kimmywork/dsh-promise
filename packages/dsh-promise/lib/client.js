@@ -285,6 +285,7 @@ window.__ModuleLoader__.load({
       const dialogRef = react.useRef(null)
       const triggerRef = react.useRef(null)
       const refreshRef = react.useRef(null)
+      const outsideRef = react.useRef(null)
 
       // Load on mount and keep the badge fresh: the ledger can change from a
       // settlement or an auto-bound delegation while this header is mounted.
@@ -342,25 +343,42 @@ window.__ModuleLoader__.load({
         dialog.style.width = `${width}px`
       }
 
-      const openPanel = () => {
-        const dialog = dialogRef.current
-        if (!dialog) return
-        placePanel()
-        // showModal puts the panel in the browser top layer, so neither the
-        // conversation's overflow nor any ancestor stacking context can hide it.
-        if (typeof dialog.showModal === 'function') {
-          if (!dialog.open) dialog.showModal()
-        } else {
-          dialog.setAttribute('open', '')
+      const removeOutsideListener = () => {
+        if (outsideRef.current && typeof document !== 'undefined') {
+          document.removeEventListener('pointerdown', outsideRef.current, true)
         }
-        refreshRef.current?.()
+        outsideRef.current = null
       }
 
       const closePanel = () => {
+        removeOutsideListener()
         const dialog = dialogRef.current
         if (!dialog) return
         if (typeof dialog.close === 'function' && dialog.open) dialog.close()
         else dialog.removeAttribute('open')
+      }
+
+      const openPanel = () => {
+        const dialog = dialogRef.current
+        if (!dialog) return
+        placePanel()
+        // show() (not showModal) keeps the top-layer positioning without making
+        // the rest of the conversation inert behind an invisible modal backdrop.
+        if (typeof dialog.show === 'function') {
+          if (!dialog.open) dialog.show()
+        } else {
+          dialog.setAttribute('open', '')
+        }
+        removeOutsideListener()
+        if (typeof document !== 'undefined') {
+          const onPointer = (event) => {
+            if (dialog.contains(event.target) || triggerRef.current?.contains(event.target)) return
+            closePanel()
+          }
+          outsideRef.current = onPointer
+          document.addEventListener('pointerdown', onPointer, true)
+        }
+        refreshRef.current?.()
       }
 
       const header = snapshot?.header
@@ -526,20 +544,8 @@ window.__ModuleLoader__.load({
 
     const inject = ['slots', 'locale']
 
-    function ensurePanelStyle() {
-      if (typeof document === 'undefined' || document.getElementById('dsh-promise-credits-style')) return undefined
-      const style = document.createElement('style')
-      style.id = 'dsh-promise-credits-style'
-      // A header popover should not dim the whole app; the dialog is only used
-      // for top-layer positioning, not for modality.
-      style.textContent = 'dialog[data-promise-credits]::backdrop{background:transparent}'
-      document.head.appendChild(style)
-      return () => style.remove()
-    }
-
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-promise: dictionaries')
-      ctx.effect(() => ensurePanelStyle(), 'dsh-promise: credit panel style')
       const t = ctx.locale.bind(NS)
 
       // The credit panel needs the Client Remote face. Wait for it separately so

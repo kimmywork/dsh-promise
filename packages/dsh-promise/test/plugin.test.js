@@ -1,4 +1,6 @@
 import test from 'node:test'
+import fs from 'node:fs'
+import path from 'node:path'
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
@@ -167,4 +169,38 @@ test('boots on a real Cordis context and publishes the inventory Remote', async 
   assert.equal(snapshot.sessionId, 'session-with-no-jobs')
   assert.equal(snapshot.header.promises, 0)
   assert.deepEqual(snapshot.rows, [])
+})
+
+test('a blocked delegation does not create a promise job', async () => {
+  const dir = tempDir()
+  const teams = {
+    listMembers: () => [{ id: 'solo-session', name: 'solo', status: 'running' }],
+    sendMessage: async () => ({}),
+    spawnTeammate: async () => ({}),
+  }
+  const { ctx, tools, handlers } = fakeContext({ agentTeams: teams })
+  apply(ctx, Config({ dataDir: dir, jev: { enabled: false } }))
+  await tools.find((tool) => tool.name === 'promise_declare').execute({
+    agent: 'team:solo',
+    capability: 'code.blocked',
+    statement: 'do the delegated task',
+  }, {})
+
+  const handler = handlers.find((entry) => entry.event === 'tools/post-execute').handler
+  const decision = await handler({
+    name: 'spawn_teammate',
+    arguments: { name: 'solo', prompt: 'do it' },
+    agent: { session: { id: 'sess-blocked' } },
+  }, {
+    isError: false,
+    content: [],
+    value: { member: { target: 'solo', status: 'running' } },
+  }, async () => ({ kind: 'block', feedback: [{ type: 'text', text: 'blocked by policy' }] }))
+
+  assert.equal(decision.kind, 'block')
+  const events = fs.readFileSync(path.join(dir, 'ledger.jsonl'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  assert.equal(events.some((event) => event.type === 'job/opened'), false)
 })

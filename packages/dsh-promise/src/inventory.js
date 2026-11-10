@@ -7,15 +7,6 @@
 import { trustView } from './trust.js'
 import { invokeHint } from './router.js'
 
-function latestAssessment(state, jobId) {
-  let latest = null
-  for (const assessment of state.assessments.values()) {
-    if (assessment.jobId !== jobId) continue
-    if (!latest || String(assessment.createdAt) >= String(latest.createdAt)) latest = assessment
-  }
-  return latest
-}
-
 /**
  * @param {object} input
  * @param {import('./engine.js').PromiseEngine} input.engine
@@ -27,14 +18,30 @@ function latestAssessment(state, jobId) {
 export function buildSnapshot({ engine, sessionId, now = Date.now(), memberById }) {
   const state = engine.state
   const jobs = [...state.jobs.values()].filter((job) => job.sessionId === sessionId)
+  // Index once: snapshot runs once per poll per mounted session, so rescanning
+  // every promise/assessment for every job grows quadratically with the ledger.
+  const promiseById = new Map([...state.promises.values()].map((promise) => [promise.id, promise]))
+  const assessmentByJob = new Map()
+  for (const assessment of state.assessments.values()) {
+    const current = assessmentByJob.get(assessment.jobId)
+    if (!current || String(assessment.createdAt) >= String(current.createdAt)) {
+      assessmentByJob.set(assessment.jobId, assessment)
+    }
+  }
+  const trustCache = new Map()
   const rows = new Map()
   const recent = []
 
   for (const job of jobs) {
-    const promise = [...state.promises.values()].find((candidate) => candidate.id === job.promiseId)
+    const promise = promiseById.get(job.promiseId)
     if (!promise) continue
-    const view = engine.trustFor(promise.agent, promise.capability)
-    const key = `${promise.agent}\u0000${promise.capability}`
+    const trustKey = `${promise.agent}\u0000${promise.capability}`
+    let view = trustCache.get(trustKey)
+    if (view === undefined) {
+      view = engine.trustFor(promise.agent, promise.capability)
+      trustCache.set(trustKey, view)
+    }
+    const key = trustKey
     let row = rows.get(key)
     if (!row) {
       const hint = invokeHint(promise.agent)
@@ -59,7 +66,7 @@ export function buildSnapshot({ engine, sessionId, now = Date.now(), memberById 
       rows.set(key, row)
     }
     row.jobs += 1
-    const assessment = latestAssessment(state, job.id)
+    const assessment = assessmentByJob.get(job.id)
     if (assessment && (!row.lastAt || String(assessment.createdAt) > row.lastAt)) {
       row.lastAt = assessment.createdAt
       row.lastVerdict = assessment.verdict

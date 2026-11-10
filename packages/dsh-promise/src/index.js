@@ -222,14 +222,20 @@ export function apply(ctx, config) {
   // Post-execute carries the canonical result, including the child identity, so an
   // open job opened by promise_select can be bound to that child without a new tool.
   ctx.on('tools/post-execute', async (exec, result, next) => {
+    // Bind only after the waterfall accepts the call: a delegation that a later
+    // policy blocks must not leave a linked job waiting on a child that never ran.
+    const decision = await next()
+    if (decision?.kind !== 'accept') return decision
+
     let boundJobId = null
+    const finalValue = Object.hasOwn(decision, 'value') ? decision.value : result?.value
     try {
       if (result && result.isError === false) {
         const sessionId = exec?.agent?.session?.id
         boundJobId = engine.bindToolDelegation({
           toolName: exec?.name,
           args: exec?.arguments ?? {},
-          value: result.value,
+          value: finalValue,
           callerSessionId: sessionId ? String(sessionId) : undefined,
           callerAgent: exec?.agent,
           teams: services.getTeams(),
@@ -238,9 +244,8 @@ export function apply(ctx, config) {
     } catch (error) {
       log('warn', `delegation binding failed: ${error?.message ?? error}`)
     }
-    const decision = await next()
     if (!boundJobId || config.ui?.annotateDelegation === false) return decision
-    if (decision?.kind !== 'accept' || decision.content !== undefined || decision.value !== undefined) return decision
+    if (decision.content !== undefined || decision.value !== undefined) return decision
     try {
       const job = engine.state.jobs.get(boundJobId)
       if (!job) return decision
