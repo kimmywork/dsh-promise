@@ -36,6 +36,18 @@ window.__ModuleLoader__.load({
       readonly: '当前组合不允许在这里写入配置',
       secretNote: '注意：Key 会以明文保存在本机 profile 配置文件中。',
       configured: '已配置',
+      action: '承诺',
+      creditsTitle: '承诺与信用',
+      creditsEmpty: '本会话还没有承诺',
+      creditsLoading: '读取中…',
+      creditsError: '读取失败',
+      creditsTeam: '团队',
+      creditsSubagent: '子代理',
+      creditsEvidence: '证据',
+      creditsRecent: '最近结算',
+      creditsNoRecent: '暂无结算',
+      creditsClose: '关闭',
+      creditsUnknown: '未知',
     }
     const en = {
       summary: 'Jev connection: base URL, model, API key',
@@ -56,6 +68,18 @@ window.__ModuleLoader__.load({
       readonly: 'This composition does not allow writing configuration here',
       secretNote: 'Note: the key is stored in plain text in this machine’s profile configuration.',
       configured: 'Configured',
+      action: 'Promises',
+      creditsTitle: 'Promises and credit',
+      creditsEmpty: 'No promises in this session yet',
+      creditsLoading: 'Loading…',
+      creditsError: 'Failed to load',
+      creditsTeam: 'team',
+      creditsSubagent: 'subagent',
+      creditsEvidence: 'evidence',
+      creditsRecent: 'Recent settlements',
+      creditsNoRecent: 'No settlements yet',
+      creditsClose: 'Close',
+      creditsUnknown: 'unknown',
     }
 
     const styles = {
@@ -87,6 +111,39 @@ window.__ModuleLoader__.load({
       },
       status: { fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' },
       error: { fontSize: '12px', color: 'var(--dsw-alias-state-error-primary)' },
+      trigger: {
+        padding: '3px 8px',
+        borderRadius: '6px',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-fill-l1)',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: '12px',
+        lineHeight: '18px',
+        cursor: 'pointer',
+      },
+      panel: {
+        position: 'absolute',
+        top: 'calc(100% + 6px)',
+        right: 0,
+        zIndex: 120,
+        width: '380px',
+        maxHeight: '440px',
+        overflow: 'auto',
+        padding: '10px',
+        borderRadius: '10px',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-specific-menu, #fff)',
+        boxShadow: 'var(--dsw-elevation-prominent, 0 8px 24px rgba(0,0,0,.18))',
+        color: 'var(--dsw-alias-label-primary)',
+      },
+      panelTitle: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: 600, marginBottom: '6px' },
+      row: { display: 'flex', flexDirection: 'column', gap: '2px', padding: '6px 4px', borderTop: '1px solid var(--dsw-alias-border-l1)' },
+      rowHead: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' },
+      dot: { width: '7px', height: '7px', borderRadius: '50%', flex: 'none' },
+      name: { fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      kind: { marginLeft: 'auto', fontSize: '10px', color: 'var(--dsw-alias-label-tertiary)' },
+      meta: { fontSize: '11px', color: 'var(--dsw-alias-label-tertiary)', paddingLeft: '13px' },
+      verdict: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', paddingLeft: '13px' },
     }
 
     function Page(props) {
@@ -191,11 +248,129 @@ window.__ModuleLoader__.load({
       return react.createElement(Page, props)
     }
 
-    const inject = ['slots', 'locale']
+
+    async function loadSnapshot(ctx, sessionId) {
+      const namespace = ctx.remote && ctx.remote.promiseInventory
+      if (!namespace || typeof namespace.snapshot !== 'function') throw new Error('promiseInventory remote is not published')
+      const result = await namespace.snapshot(String(sessionId))
+      if (result && result.ok === false) throw new Error(result.error?.message ?? 'promiseInventory.snapshot failed')
+      return result && result.value !== undefined ? result.value : result
+    }
+
+    function creditColor(row) {
+      if (!row.evidence) return 'var(--dsw-alias-label-tertiary, #999)'
+      if (row.status === 'suspended' || row.trust < 0.45) return 'var(--dsw-alias-state-error-primary, #d14343)'
+      if (row.status === 'probation' || row.trust < 0.7) return 'var(--dsw-alias-state-warning-primary, #b7791f)'
+      return 'var(--dsw-alias-state-success-primary, #2ea043)'
+    }
+
+    function PromiseCreditsAction(props) {
+      const { sessionId, load, t } = props
+      const [open, setOpen] = react.useState(false)
+      const [snapshot, setSnapshot] = react.useState(null)
+      const [status, setStatus] = react.useState('idle')
+
+      react.useEffect(() => {
+        if (!open || !sessionId) return undefined
+        let cancelled = false
+        setStatus('loading')
+        Promise.resolve()
+          .then(() => load(sessionId))
+          .then((value) => {
+            if (cancelled) return
+            setSnapshot(value)
+            setStatus('ready')
+          })
+          .catch((error) => {
+            if (cancelled) return
+            setSnapshot({ error: String(error?.message ?? error) })
+            setStatus('error')
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [open, sessionId])
+
+      const header = snapshot?.header
+      const label = header
+        ? `${t('action')} ${header.promises} · ${Number(header.credit).toFixed(2)}`
+        : t('action')
+
+      const rows = []
+      if (snapshot && snapshot.rows) {
+        for (const row of snapshot.rows) {
+          rows.push(react.createElement('div', { key: `${row.agent}:${row.capability}`, style: styles.row }, [
+            react.createElement('div', { key: 'head', style: styles.rowHead }, [
+              react.createElement('span', { key: 'dot', style: { ...styles.dot, background: creditColor(row) } }),
+              react.createElement('span', { key: 'name', style: styles.name }, row.name || row.agent),
+              react.createElement('span', { key: 'kind', style: styles.kind }, t(row.kind === 'team' ? 'creditsTeam' : 'creditsSubagent')),
+            ]),
+            react.createElement('div', { key: 'cap', style: styles.meta }, row.capability),
+            react.createElement('div', { key: 'credit', style: styles.verdict },
+              row.evidence
+                ? `${Number(row.trust).toFixed(2)} · lower ${Number(row.lower).toFixed(2)} · ${row.evidence} ${t('creditsEvidence')}`
+                : t('creditsUnknown')),
+            row.lastVerdict ? react.createElement('div', { key: 'verdict', style: styles.meta }, row.lastVerdict) : null,
+          ]))
+        }
+      }
+
+      const recent = (snapshot?.recent ?? []).map((entry, index) => react.createElement('div', {
+        key: `r${index}`,
+        style: styles.meta,
+      }, `${entry.verdict} · L${entry.level} · ${Number(entry.confidence).toFixed(2)} · ${entry.capability}`))
+
+      const body = status === 'loading'
+        ? react.createElement('p', { style: styles.hint }, t('creditsLoading'))
+        : status === 'error'
+          ? react.createElement('p', { style: styles.error }, `${t('creditsError')}: ${snapshot?.error ?? ''}`)
+          : rows.length === 0
+            ? react.createElement('p', { style: styles.hint }, t('creditsEmpty'))
+            : rows
+
+      return react.createElement('span', { style: { position: 'relative', display: 'inline-flex' } }, [
+        react.createElement('button', {
+          key: 'trigger',
+          type: 'button',
+          style: styles.trigger,
+          'aria-expanded': open,
+          onClick: () => setOpen((value) => !value),
+        }, label),
+        open
+          ? react.createElement('div', { key: 'panel', style: styles.panel }, [
+            react.createElement('div', { key: 'title', style: styles.panelTitle }, [
+              react.createElement('span', { key: 'label' }, t('creditsTitle')),
+              react.createElement('button', {
+                key: 'close',
+                type: 'button',
+                style: { ...styles.button, padding: '2px 8px' },
+                onClick: () => setOpen(false),
+              }, t('creditsClose')),
+            ]),
+            body,
+            recent.length > 0
+              ? react.createElement('div', { key: 'recent' }, [
+                react.createElement('div', { key: 'recentTitle', style: { ...styles.label, marginTop: '8px' } }, t('creditsRecent')),
+                ...recent,
+              ])
+              : react.createElement('p', { key: 'noRecent', style: { ...styles.hint, marginTop: '8px' } }, t('creditsNoRecent')),
+          ])
+          : null,
+      ])
+    }
 
     function apply(ctx) {
+    const inject = ['slots', 'locale', 'remote']
+
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-promise: dictionaries')
       const t = ctx.locale.bind(NS)
+      ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+        name: 'conversation.session.header.actions',
+        id: 'promise-credits',
+        order: 55,
+        locale: NS,
+        inject: () => ({ load: (sessionId) => loadSnapshot(ctx, sessionId), t }),
+      }, PromiseCreditsAction))
       ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
         name: 'plugins.row.config',
         key: 'dsh-promise#promise',

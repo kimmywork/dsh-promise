@@ -154,7 +154,7 @@ subagent.row.meta          (session) -> ReactNode
 2. client 侧在 `conversation.session.header.actions` 注册一个按钮 + 面板（React，复用现有 header action 样式）；
 3. 行级 badge 作为上游 slot 提案，等 `ui-subagent` / `ui-agent-team` 接受后再接。
 
-**已知缺口**：背景自动结算没有工具调用可挂卡片；这个面板正好补上「最近结算」视图。
+**已实现（A）**：会话头部新增 `承诺 N · credit` 按钮，点开是本会话的 team/subagent 行列（capability、trust/lower/证据数、最近 verdict）与最近 5 条结算。数据来自 host 的只读 Remote `promiseInventory.snapshot(sessionId)`（`src/index.js` 运行时标记 + `src/inventory.js` 快照）；client 在 namespace 未发布时**自动隐藏按钮**，不影响插件页。仍需重启后做一次真实验证。
 
 ---
 
