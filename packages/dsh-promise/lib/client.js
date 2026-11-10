@@ -394,6 +394,10 @@ window.__ModuleLoader__.load({
               react.createElement('span', { key: 'kind', style: styles.kind }, t(row.kind === 'team' ? 'creditsTeam' : 'creditsSubagent')),
             ]),
             react.createElement('div', { key: 'cap', style: styles.meta }, row.capability),
+            react.createElement('div', { key: 'policy', style: styles.meta },
+              row.policy
+                ? `${row.policy.model ?? 'unknown model'} · ${row.policy.agentPreset ?? 'unknown preset'} · ${row.policy.id}`
+                : 'legacy policy'),
             react.createElement('div', { key: 'credit', style: styles.verdict },
               row.evidence
                 ? `${Number(row.trust).toFixed(2)} · lower ${Number(row.lower).toFixed(2)} · ${row.evidence} ${t('creditsEvidence')}`

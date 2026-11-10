@@ -167,6 +167,7 @@ export class Ledger {
       case 'job/linked': {
         const job = this.state.jobs.get(payload.jobId)
         if (job && payload.delegation) job.delegation = payload.delegation
+        if (job && payload.policy) job.policy = payload.policy
         break
       }
       case 'job/closed': {
@@ -191,7 +192,8 @@ export class Ledger {
         }
         for (const item of payload.evidence ?? []) {
           if (!item?.agent || !item?.capability || !item?.assessor) continue
-          const key = recordKey(item.agent, item.capability, item.assessor)
+          const policyId = item.policyId ?? payload.assessment?.policy?.id ?? 'legacy'
+          const key = recordKey(item.agent, item.capability, item.assessor, policyId)
           const record = applyEvidence(
             this.state.trust.get(key),
             { score: item.score, weight: item.weight, at: item.at },

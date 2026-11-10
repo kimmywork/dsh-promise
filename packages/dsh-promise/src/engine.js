@@ -13,6 +13,7 @@ import { rankCandidates } from './router.js'
 import { decide, verdictScore } from './verdict.js'
 import { runSemantic } from './assess.js'
 import { JevOversizeError } from './jev.js'
+import { buildPolicy, contractHash } from './policy.js'
 
 const LEVEL_WEIGHT = { 0: 0, 1: 0.35, 2: 0.7, 3: 1 }
 const CAPABILITY_RE = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/
@@ -53,8 +54,22 @@ export class PromiseEngine {
     return this.ledger.state
   }
 
-  trustFor(agent, capability) {
-    return trustView(this.state.trust, agent, capability, this.config.trust.prior, { now: Date.now(), halfLifeDays: this.config.trust.halfLifeDays })
+  trustFor(agent, capability, policyId) {
+    return trustView(this.state.trust, agent, capability, this.config.trust.prior, {
+      now: Date.now(),
+      halfLifeDays: this.config.trust.halfLifeDays,
+      ...(policyId === undefined ? {} : { policyId }),
+    })
+  }
+
+  #policyFor(job, promise) {
+    if (job.policy) return job.policy
+    const childSessionId = job.delegation?.sessionId ?? job.sessionId
+    const hash = contractHash(promise)
+    job.policy = typeof this.collector.policyOf === 'function'
+      ? this.collector.policyOf(childSessionId, { contractHash: hash })
+      : buildPolicy({ contractHash: hash })
+    return job.policy
   }
 
   promisesFor(capability) {
@@ -278,7 +293,8 @@ export class PromiseEngine {
       truncated: semantic?.truncated === true,
     })
 
-    const viewBefore = this.trustFor(promise.agent, promise.capability)
+    const policy = this.#policyFor(job, promise)
+    const viewBefore = this.trustFor(promise.agent, promise.capability, policy.id)
     const attributionWeight = job.attribution === 'signal' ? this.config.attribution.signalWeight : 1
     const assessor = semantic ? 'judge:jev' : 'system:checks'
     const evidence = []
@@ -286,6 +302,7 @@ export class PromiseEngine {
       evidence.push({
         agent: promise.agent,
         capability: promise.capability,
+        policyId: policy.id,
         assessor,
         score: verdictScore(verdict.verdict, layers),
         weight: LEVEL_WEIGHT[planned.level] * (0.5 + 0.5 * verdict.confidence) * attributionWeight,
@@ -299,6 +316,7 @@ export class PromiseEngine {
       promiseId: promise.id,
       agent: promise.agent,
       capability: promise.capability,
+      policy,
       assessor,
       method: semantic ? 'jev' : 'rules',
       level: planned.level,
@@ -341,7 +359,7 @@ export class PromiseEngine {
       unmetRequirement: assessment.unmetRequirement,
       rationale: verdict.rationale,
       rules: [...ruleResults, ...checkResults],
-      trust: this.#trustDelta(promise.agent, promise.capability, evidence[0], viewBefore),
+      trust: this.#trustDelta(promise.agent, promise.capability, policy.id, evidence[0], viewBefore),
       breach,
       recovery,
       semantic: semanticMeta,
@@ -359,7 +377,8 @@ export class PromiseEngine {
     if (!outputText || !this.jev?.configured) {
       return { jobId: job.id, verdict: job.verdict, note: 'job was auto-settled; no semantic enrichment applied', level: job.level }
     }
-    const view = this.trustFor(promise.agent, promise.capability)
+    const policy = this.#policyFor(job, promise)
+    const view = this.trustFor(promise.agent, promise.capability, policy.id)
     const planned = planLevel({
       riskTier: job.riskTier,
       reversible: job.reversible,
@@ -398,6 +417,7 @@ export class PromiseEngine {
         promiseId: promise.id,
         agent: promise.agent,
         capability: promise.capability,
+        policy,
         assessor: 'judge:jev',
         method: 'jev',
         level: planned.level,
@@ -414,12 +434,13 @@ export class PromiseEngine {
       const evidence = verdict.verdict === 'undetermined' ? [] : [{
         agent: promise.agent,
         capability: promise.capability,
+        policyId: policy.id,
         assessor: 'judge:jev',
         score: verdictScore(verdict.verdict, layers),
         weight: LEVEL_WEIGHT[planned.level] * (0.5 + 0.5 * verdict.confidence),
         at: Date.now(),
       }]
-      const viewBefore = this.trustFor(promise.agent, promise.capability)
+      const viewBefore = this.trustFor(promise.agent, promise.capability, policy.id)
       this.ledger.append('assessment/recorded', { assessment, evidence })
       const breach = verdict.verdict === 'violated' ? this.#applyBreach(promise, job, assessment, viewBefore) : null
       return { jobId: job.id, verdict: verdict.verdict, layers, confidence: verdict.confidence, rationale: verdict.rationale, breach, note: 'semantic enrichment of an auto-settled job' }
@@ -776,6 +797,7 @@ export class PromiseEngine {
       promiseId: job.promiseId,
       agent: job.agent,
       capability: job.capability,
+      ...(job.policy ? { policy: job.policy } : {}),
       assessor: 'user:feedback',
       method: 'user',
       level: 1,
@@ -795,6 +817,7 @@ export class PromiseEngine {
       evidence: [{
         agent: job.agent,
         capability: job.capability,
+        policyId: job.policy?.id ?? 'legacy',
         assessor: 'user:feedback',
         score: positive ? 1 : 0.2,
         weight: 1,
@@ -846,7 +869,15 @@ export class PromiseEngine {
         if (input.agent && promise.agent !== input.agent) continue
         if (input.capability && promise.capability !== input.capability) continue
         const view = this.trustFor(promise.agent, promise.capability)
-        rows.push({ agent: promise.agent, capability: promise.capability, status: promise.status, ...view })
+        const policyIds = new Set()
+        for (const job of this.state.jobs.values()) {
+          if (job.agent === promise.agent && job.capability === promise.capability && job.policy?.id) policyIds.add(job.policy.id)
+        }
+        for (const assessment of this.state.assessments.values()) {
+          if (assessment.agent === promise.agent && assessment.capability === promise.capability && assessment.policy?.id) policyIds.add(assessment.policy.id)
+        }
+        const policies = [...policyIds].map((id) => ({ id, ...this.trustFor(promise.agent, promise.capability, id) }))
+        rows.push({ agent: promise.agent, capability: promise.capability, status: promise.status, ...view, ...(policies.length > 0 ? { policies } : {}) })
       }
       rows.sort((a, b) => b.score - a.score)
       return { what, rows: rows.slice(0, limit), text: renderTrust(rows.slice(0, limit)) }
@@ -1045,9 +1076,9 @@ export class PromiseEngine {
     return results
   }
 
-  #trustDelta(agent, capability, evidence, before) {
+  #trustDelta(agent, capability, policyId, evidence, before) {
     if (!evidence) return null
-    const after = this.trustFor(agent, capability)
+    const after = this.trustFor(agent, capability, policyId)
     return {
       before: before ? Number(before.score.toFixed(3)) : null,
       score: Number(after.score.toFixed(3)),
@@ -1222,7 +1253,10 @@ function renderTrust(rows) {
   if (rows.length === 0) return 'no promises declared'
   const lines = ['agent                          capability               trust  lower  mass  n  status']
   for (const row of rows) {
-    lines.push(`${row.agent.padEnd(30).slice(0, 30)} ${row.capability.padEnd(24).slice(0, 24)} ${row.score.toFixed(2)}  ${row.lower.toFixed(2)}  ${row.mass.toFixed(1).padStart(4)}  ${String(row.count).padStart(2)}  ${row.status}`)
+    lines.push(`${row.agent.padEnd(30).slice(0, 30)} ${row.capability.padEnd(24).slice(0, 24)} ${row.score.toFixed(2)}  ${row.lower.toFixed(2)}  ${row.mass.toFixed(1).padStart(4)}  ${String(row.count).padStart(2)}  ${row.status}  family`)
+    for (const policy of row.policies ?? []) {
+      lines.push(`  policy ${policy.id}  ${policy.score.toFixed(2)}  lower ${policy.lower.toFixed(2)}  n ${policy.count}`)
+    }
   }
   return lines.join('\n')
 }

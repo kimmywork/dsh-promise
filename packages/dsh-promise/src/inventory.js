@@ -57,6 +57,8 @@ export function buildSnapshot({ engine, sessionId, now = Date.now(), memberById 
         evidence: view.count,
         mass: Number(view.mass.toFixed(2)),
         status: promise.status,
+        policy: job.policy ?? null,
+        policyAt: job.policy ? job.openedAt : null,
         sessionId: job.delegation?.sessionId ?? null,
         live: member?.status ?? null,
         jobs: 0,
@@ -66,6 +68,10 @@ export function buildSnapshot({ engine, sessionId, now = Date.now(), memberById 
       rows.set(key, row)
     }
     row.jobs += 1
+    if (job.policy && (!row.policyAt || String(job.openedAt) > String(row.policyAt))) {
+      row.policy = job.policy
+      row.policyAt = job.openedAt
+    }
     const assessment = assessmentByJob.get(job.id)
     if (assessment && (!row.lastAt || String(assessment.createdAt) > row.lastAt)) {
       row.lastAt = assessment.createdAt

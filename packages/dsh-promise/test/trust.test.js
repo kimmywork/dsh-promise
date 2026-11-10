@@ -74,3 +74,22 @@ test('read-time decay drifts a stale high score back toward the prior', () => {
   assert.ok(stale.score > 0.5)
   assert.ok(stale.mass < fresh.mass)
 })
+
+test('policy-separated evidence does not contaminate another policy', () => {
+  const now = Date.now()
+  const map = new Map([
+    [recordKey('team:reviewer', 'code.review', 'judge:jev', 'p_deepseek'), { score: 0.9, mass: 2, count: 2, updatedAt: now }],
+    [recordKey('team:reviewer', 'code.review', 'judge:jev', 'p_gpt'), { score: 0.1, mass: 2, count: 2, updatedAt: now }],
+  ])
+  assert.equal(trustView(map, 'team:reviewer', 'code.review', 0.5, { policyId: 'p_deepseek' }).score, 0.9)
+  assert.equal(trustView(map, 'team:reviewer', 'code.review', 0.5, { policyId: 'p_gpt' }).score, 0.1)
+  const family = trustView(map, 'team:reviewer', 'code.review', 0.5)
+  assert.equal(family.score, 0.5)
+  assert.equal(family.count, 4)
+})
+
+test('legacy three-part keys remain readable', () => {
+  const now = Date.now()
+  const map = new Map([['team:old\u0000code.review\u0000judge:jev', { score: 0.7, mass: 1, count: 1, updatedAt: now }]])
+  assert.equal(trustView(map, 'team:old', 'code.review', 0.5, { policyId: 'legacy' }).score, 0.7)
+})

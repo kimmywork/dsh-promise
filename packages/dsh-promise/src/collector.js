@@ -4,7 +4,8 @@
  * the session and never blocks the agent loop.
  * @module dsh-promise/collector
  */
-import { blocksToText, truncateMiddle } from './util.js'
+import { blocksToText, sha256, truncateMiddle } from './util.js'
+import { buildPolicy } from './policy.js'
 
 const FILE_TOOLS = new Set(['write', 'edit', 'move', 'delete', 'create', 'patch', 'apply_patch'])
 
@@ -46,6 +47,7 @@ export class SessionCollector {
         turns: new Map(),
         files: new Set(),
         messageTurns: new Map(),
+        policy: {},
         lastAt: Date.now(),
       }
       this.sessions.set(sessionId, state)
@@ -74,8 +76,38 @@ export class SessionCollector {
     const data = event.data ?? {}
     const at = Date.now()
     state.lastAt = at
+    if (typeof session?.header?.agentPreset === 'string' && !state.policy.agentPreset) {
+      state.policy.agentPreset = session.header.agentPreset
+    }
 
     switch (event.type) {
+      case 'subagent/descriptor': {
+        if (typeof data.agentProvider === 'string') state.policy.provider = data.agentProvider
+        if (typeof data.agentModel === 'string') state.policy.model = data.agentModel
+        if (typeof data.agentReasoningEffort === 'string') state.policy.reasoningEffort = data.agentReasoningEffort
+        break
+      }
+      case 'request/header': {
+        const config = data.header?.config
+        if (config) {
+          if (typeof config.provider === 'string') state.policy.provider = config.provider
+          if (typeof config.model === 'string') state.policy.model = config.model
+          if (typeof config.reasoningEffort === 'string') state.policy.reasoningEffort = config.reasoningEffort
+        }
+        const tools = data.header?.tools
+        if (Array.isArray(tools)) {
+          const names = tools.map((tool) => tool?.name).filter((name) => typeof name === 'string').sort()
+          state.policy.toolsHash = sha256(names.join('\n')).slice(0, 12)
+        }
+        break
+      }
+      case 'system/message': {
+        if (!state.policy.systemPromptHash) {
+          const text = blocksToText(data.message?.content, 1_000_000)
+          if (text.length > 0) state.policy.systemPromptHash = sha256(text).slice(0, 12)
+        }
+        break
+      }
       case 'turn/start': {
         state.currentTurn = data.turn ?? state.currentTurn
         const entry = this.#turn(state, state.currentTurn)
@@ -124,6 +156,11 @@ export class SessionCollector {
         const text = blocksToText(message.content, 16_384)
         entry.assistants.push({ text, at })
         if (message.id) state.messageTurns.set(String(message.id), data.turn ?? state.currentTurn)
+        const source = message.source
+        if (source) {
+          if (typeof source.provider === 'string' && !state.policy.provider) state.policy.provider = source.provider
+          if (typeof source.model === 'string' && !state.policy.model) state.policy.model = source.model
+        }
         break
       }
       case 'feedback/message-put': {
@@ -195,6 +232,18 @@ export class SessionCollector {
       retries,
       feedback: entry?.feedback ?? [],
     }
+  }
+
+  /**
+   * Policy snapshot captured from the child/parent session's own events. The
+   * task prompt is never hashed; `contractHash` comes from the promise record.
+   * @param {string} sessionId
+   * @param {{contractHash?:string}} [options]
+   * @returns {object}
+   */
+  policyOf(sessionId, options = {}) {
+    const state = this.sessions.get(String(sessionId))
+    return buildPolicy({ ...(state?.policy ?? {}), contractHash: options.contractHash })
   }
 
   reset(sessionId) {

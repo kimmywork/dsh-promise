@@ -538,6 +538,33 @@ test('spawn_teammate opens the job implicitly when the agent has one active prom
   engine.watchers.clear()
 })
 
+test('a delegated settlement records the child policy and trusts it separately', async () => {
+  const { engine, collector } = makeEngine()
+  engine.declare({
+    agent: 'team:policy',
+    capability: 'code.policy',
+    statement: 'review the change and report findings with file:line',
+    rules: [{ id: 'min', kind: 'min-bytes', min: 1 }],
+    assessment: { policy: 'L1' },
+  })
+  const selected = engine.select({ capability: 'code.policy', need: 'review', riskTier: 1 }, { sessionId: SESSION.id, turn: 1 })
+  const child = { id: 'child-policy-session', header: { cwd: process.cwd(), agentPreset: 'cordis' } }
+  engine.linkDelegation(selected.jobId, { kind: 'team', name: 'policy', sessionId: child.id })
+  collector.observe(child, { type: 'subagent/descriptor', data: { agentProvider: 'deepseek-account', agentModel: 'deepseek-flash', agentReasoningEffort: 'high' } })
+  collector.observe(child, { type: 'system/message', data: { message: { role: 'system', content: [{ type: 'text', text: 'You are a reviewer.' }] } } })
+  collector.observe(child, { type: 'request/header', data: { header: { config: { provider: 'deepseek-account', model: 'deepseek-flash' }, tools: [{ name: 'read' }] } } })
+  feedTurn(collector, child, { assistant: '## Findings\nreviewed src/a.js:1 — ok' })
+  const result = await engine.settleDelegated(selected.jobId)
+  assert.equal(result.verdict, 'fulfilled')
+  const assessment = [...engine.state.assessments.values()].find((entry) => entry.jobId === selected.jobId)
+  assert.equal(assessment.policy.model, 'deepseek-flash')
+  assert.equal(assessment.policy.agentPreset, 'cordis')
+  const exact = engine.trustFor('team:policy', 'code.policy', assessment.policy.id)
+  assert.equal(exact.count, 1)
+  const family = engine.trustFor('team:policy', 'code.policy')
+  assert.equal(family.count, 1)
+})
+
 test('a follow-up message to the same child reuses the open implicit job', () => {
   const { engine, collector } = makeEngine()
   engine.declare({

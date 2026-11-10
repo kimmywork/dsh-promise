@@ -87,13 +87,15 @@ export function wilsonLower(score, n, z = 1) {
   return clamp01((centre - margin) / denom)
 }
 
-export function recordKey(agent, capability, assessor) {
-  return `${agent}\u0000${capability}\u0000${assessor}`
+export function recordKey(agent, capability, assessor, policyId = 'legacy') {
+  return `${agent}\u0000${capability}\u0000${policyId}\u0000${assessor}`
 }
 
 export function splitKey(key) {
-  const [agent, capability, assessor] = String(key).split('\u0000')
-  return { agent, capability, assessor }
+  const parts = String(key).split('\u0000')
+  if (parts.length === 3) return { agent: parts[0], capability: parts[1], policyId: 'legacy', assessor: parts[2] }
+  const [agent, capability, policyId, assessor] = parts
+  return { agent, capability, policyId: policyId || 'legacy', assessor }
 }
 
 /**
@@ -112,15 +114,19 @@ export function decayRecord(record, now, halfLifeDays, prior) {
 }
 
 /**
- * Resolve the trust view for one (agent, capability): aggregate across
+ * Resolve the trust view for one (agent, capability[, policy]): aggregate across
  * assessors, then add the Wilson lower bound used by routing.
+ * Without `options.policyId` this is the family aggregate; with it, only that
+ * policy's evidence is considered.
  * @param {number} [options.now] when supplied, records decay to this instant
  * @param {number} [options.halfLifeDays]
+ * @param {string} [options.policyId] exact policy, or omitted for the family
  */
 export function trustView(trustMap, agent, capability, prior = 0.5, options = {}) {
   const records = []
   for (const [key, record] of trustMap) {
     const parts = splitKey(key)
+    if (options.policyId !== undefined && parts.policyId !== options.policyId) continue
     if (parts.agent === agent && parts.capability === capability) {
       records.push(options.now ? decayRecord(record, options.now, options.halfLifeDays ?? 14, prior) : record)
     }

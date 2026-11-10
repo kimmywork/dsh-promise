@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { Ledger } from '../src/ledger.js'
+import { recordKey } from '../src/trust.js'
 import { tempDir } from './helpers.js'
 
 function promise(id, agent = 'preset:a', capability = 'code.change') {
@@ -25,12 +26,12 @@ test('append and reload reproduce the same state', () => {
   const event = assessmentEvent('a1')
   ledger.append(event.type, event.payload)
   ledger.append('job/closed', { jobId: 'j1', outcome: 'success', verdict: 'fulfilled' })
-  const before = ledger.state.trust.get('preset:a\u0000code.change\u0000judge:jev')
+  const before = ledger.state.trust.get(recordKey('preset:a', 'code.change', 'judge:jev'))
   assert.ok(before)
   assert.equal(ledger.verifyChain().ok, true)
 
   const reloaded = new Ledger({ dir, snapshotEvery: 100, prior: 0.5, halfLifeDays: 14 }).open()
-  const after = reloaded.state.trust.get('preset:a\u0000code.change\u0000judge:jev')
+  const after = reloaded.state.trust.get(recordKey('preset:a', 'code.change', 'judge:jev'))
   assert.ok(Math.abs(after.score - before.score) < 1e-12)
   assert.equal(reloaded.state.jobs.get('j1').closedAt !== undefined, true)
   assert.equal(reloaded.lastSeq, ledger.lastSeq)
@@ -51,8 +52,8 @@ test('snapshot plus tail equals a full replay', () => {
   assert.ok(fs.existsSync(path.join(dirA, 'snapshot.json')))
   const reloaded = new Ledger({ dir: dirA, snapshotEvery: 2, prior: 0.5, halfLifeDays: 14 }).open()
   assert.equal(reloaded.state.promises.size, full.state.promises.size)
-  assert.equal(reloaded.state.trust.get('preset:a\u0000code.change\u0000judge:jev').score,
-    full.state.trust.get('preset:a\u0000code.change\u0000judge:jev').score)
+  assert.equal(reloaded.state.trust.get(recordKey('preset:a', 'code.change', 'judge:jev')).score,
+    full.state.trust.get(recordKey('preset:a', 'code.change', 'judge:jev')).score)
 })
 
 test('a tampered ledger becomes read-only instead of silently trusting it', () => {
@@ -80,13 +81,13 @@ test('trust is a deterministic fold of evidence', () => {
     const event = assessmentEvent(`a${i}`, { score: i % 2 === 0 ? 1 : 0.2, at: at + i * 1000 })
     ledger.append(event.type, event.payload)
   }
-  const record = ledger.state.trust.get('preset:a\u0000code.change\u0000judge:jev')
+  const record = ledger.state.trust.get(recordKey('preset:a', 'code.change', 'judge:jev'))
   const replay = new Ledger({ dir: tempDir(), snapshotEvery: 1_000, prior: 0.5, halfLifeDays: 14 }).open()
   for (let i = 0; i < 5; i += 1) {
     const event = assessmentEvent(`a${i}`, { score: i % 2 === 0 ? 1 : 0.2, at: at + i * 1000 })
     replay.append(event.type, event.payload)
   }
-  const other = replay.state.trust.get('preset:a\u0000code.change\u0000judge:jev')
+  const other = replay.state.trust.get(recordKey('preset:a', 'code.change', 'judge:jev'))
   assert.equal(record.score, other.score)
   assert.equal(record.mass, other.mass)
 })

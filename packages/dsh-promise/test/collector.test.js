@@ -49,3 +49,18 @@ test('unknown sessions yield an empty observation', () => {
   assert.deepEqual(observation.changedFiles, [])
   assert.equal(observation.outputText, '')
 })
+
+test('captures policy from the child session without hashing the task prompt', () => {
+  const collector = new SessionCollector()
+  const session = { id: 'child-policy', header: { agentPreset: 'cordis' } }
+  collector.observe(session, { type: 'subagent/descriptor', data: { agentProvider: 'deepseek-account', agentModel: 'deepseek-flash', agentReasoningEffort: 'high' } })
+  collector.observe(session, { type: 'system/message', data: { message: { role: 'system', content: [{ type: 'text', text: 'You are a reviewer.' }] } } })
+  collector.observe(session, { type: 'request/header', data: { header: { config: { provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'high' }, tools: [{ name: 'read' }, { name: 'bash' }] } } })
+  const policy = collector.policyOf('child-policy', { contractHash: 'contract-1' })
+  assert.equal(policy.agentPreset, 'cordis')
+  assert.equal(policy.provider, 'deepseek-account')
+  assert.equal(policy.model, 'deepseek-flash')
+  assert.equal(policy.reasoningEffort, 'high')
+  assert.equal(policy.contractHash, 'contract-1')
+  assert.match(policy.id, /^p_/)
+})
