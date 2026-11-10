@@ -84,3 +84,23 @@ test('a replaced system prompt produces a new policy hash', () => {
   assert.notEqual(first.systemPromptHash, second.systemPromptHash)
   assert.notEqual(first.id, second.id)
 })
+
+test('warmPolicy rehydrates a resumed child from its persisted event log', () => {
+  const collector = new SessionCollector()
+  const session = {
+    id: 'resumed-child',
+    header: { agentPreset: 'cordis', origin: 'subagent' },
+    snapshotEvents: () => [
+      { type: 'subagent/descriptor', data: { agentProvider: 'deepseek-account', agentModel: 'deepseek-flash', agentReasoningEffort: 'high' } },
+      { type: 'system/message', data: { message: { content: [{ type: 'text', text: 'You are a reviewer.' }] } } },
+      { type: 'request/header', data: { header: { config: { provider: 'deepseek-account', model: 'deepseek-flash' }, tools: [{ name: 'read' }] } } },
+    ],
+  }
+  assert.equal(collector.policyOf('resumed-child').model, null)
+  collector.warmPolicy(session)
+  const policy = collector.policyOf('resumed-child', { contractHash: 'c1' })
+  assert.equal(policy.model, 'deepseek-flash')
+  assert.equal(policy.agentPreset, 'cordis')
+  assert.equal(policy.contractHash, 'c1')
+  assert.match(policy.systemPromptHash, /^[0-9a-f]{12}$/)
+})

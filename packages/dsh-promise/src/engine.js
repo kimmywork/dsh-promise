@@ -70,6 +70,7 @@ export class PromiseEngine {
       return job.policy
     }
     const childSessionId = job.delegation?.sessionId ?? job.sessionId
+    this.services.warmPolicy?.(childSessionId)
     const hash = contractHash(promise)
     job.policy = typeof this.collector.policyOf === 'function'
       ? this.collector.policyOf(childSessionId, { contractHash: hash })

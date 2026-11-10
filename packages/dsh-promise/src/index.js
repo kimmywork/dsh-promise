@@ -90,6 +90,14 @@ export function apply(ctx, config) {
   const services = {
     getTeams: () => ctx.get('agentTeams'),
     getSubagents: () => ctx.get('subagents'),
+    warmPolicy: (sessionId) => {
+      try {
+        const session = ctx.sessions.get(sessionId)
+        if (session) collector.warmPolicy(session)
+      } catch (error) {
+        log('warn', `warming policy failed: ${error?.message ?? error}`)
+      }
+    },
     readSession: (sessionId) => {
       try {
         const session = ctx.sessions.get(sessionId)

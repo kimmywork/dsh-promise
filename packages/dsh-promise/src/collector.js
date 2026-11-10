@@ -48,6 +48,7 @@ export class SessionCollector {
         files: new Set(),
         messageTurns: new Map(),
         policy: {},
+        policyWarmed: false,
         lastAt: Date.now(),
       }
       this.sessions.set(sessionId, state)
@@ -69,18 +70,10 @@ export class SessionCollector {
     return entry
   }
 
-  observe(session, event) {
-    if (!event || typeof event !== 'object') return
-    const sessionId = sessionIdOf(session)
-    const state = this.#state(sessionId)
-    const data = event.data ?? {}
-    const at = Date.now()
-    state.lastAt = at
-    if (typeof session?.header?.agentPreset === 'string' && !state.policy.agentPreset) {
-      state.policy.agentPreset = session.header.agentPreset
-    }
-
-    switch (event.type) {
+  #capturePolicy(session, state, event) {
+    const data = event?.data ?? {}
+    if (typeof session?.header?.agentPreset === 'string') state.policy.agentPreset = session.header.agentPreset
+    switch (event?.type) {
       case 'subagent/descriptor': {
         // This descriptor describes a spawned child. Apply it only when the
         // observed session is that child, never to the spawning parent's policy.
@@ -113,6 +106,21 @@ export class SessionCollector {
         if (text.length > 0) state.policy.systemPromptHash = sha256(text).slice(0, 12)
         break
       }
+      default:
+        break
+    }
+  }
+
+  observe(session, event) {
+    if (!event || typeof event !== 'object') return
+    const sessionId = sessionIdOf(session)
+    const state = this.#state(sessionId)
+    const data = event.data ?? {}
+    const at = Date.now()
+    state.lastAt = at
+    this.#capturePolicy(session, state, event)
+
+    switch (event.type) {
       case 'turn/start': {
         state.currentTurn = data.turn ?? state.currentTurn
         const entry = this.#turn(state, state.currentTurn)
@@ -161,11 +169,6 @@ export class SessionCollector {
         const text = blocksToText(message.content, 16_384)
         entry.assistants.push({ text, at })
         if (message.id) state.messageTurns.set(String(message.id), data.turn ?? state.currentTurn)
-        const source = message.source
-        if (source) {
-          if (typeof source.provider === 'string' && !state.policy.provider) state.policy.provider = source.provider
-          if (typeof source.model === 'string' && !state.policy.model) state.policy.model = source.model
-        }
         break
       }
       case 'feedback/message-put': {
@@ -237,6 +240,20 @@ export class SessionCollector {
       retries,
       feedback: entry?.feedback ?? [],
     }
+  }
+
+  /**
+   * Rehydrate policy from a session's persisted event log. A resumed teammate
+   * may not emit system/message or request/header again, so live observation
+   * alone would leave the policy incomplete.
+   * @param {object} session live Session
+   */
+  warmPolicy(session) {
+    if (!session || typeof session.snapshotEvents !== 'function') return
+    const state = this.#state(sessionIdOf(session))
+    if (state.policyWarmed) return
+    state.policyWarmed = true
+    for (const event of session.snapshotEvents()) this.#capturePolicy(session, state, event)
   }
 
   /**
