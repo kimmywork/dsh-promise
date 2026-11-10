@@ -78,7 +78,9 @@ test('format mismatch is penalised but not excluded', () => {
 
 test('invoke hints map agent ids to concrete calls', () => {
   assert.deepEqual(invokeHint('preset:developer'), { kind: 'subagent', agentPreset: 'developer' })
+  assert.deepEqual(invokeHint('team:reviewer'), { kind: 'team', member: 'reviewer' })
+  assert.deepEqual(invokeHint('bot:Alice'), { kind: 'bot', bot: 'Alice' })
   assert.deepEqual(invokeHint('tool:web_search'), { kind: 'tool', tool: 'web_search' })
-  assert.deepEqual(invokeHint('compose:pack'), { kind: 'subagent', composition: 'pack' })
+  assert.deepEqual(invokeHint('compose:pack'), { kind: 'composition', name: 'pack' })
   assert.equal(invokeHint('weird').kind, 'other')
 })

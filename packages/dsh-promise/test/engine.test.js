@@ -226,3 +226,20 @@ test('signal attribution is off unless the promise opts in', async () => {
   assert.equal(engine.state.counters.observations, 0)
   assert.equal(engine.state.jobs.size, 0)
 })
+
+
+test('select guidance names the right invocation for each agent family', () => {
+  const { engine } = makeEngine()
+
+  engine.declare({ agent: 'preset:developer', capability: 'code.change', statement: 'deliver a diff that stays in scope' })
+  const preset = engine.select({ capability: 'code.change', need: 'fix it' }, { sessionId: SESSION.id, turn: 1 })
+  assert.match(preset.guidance, /agent_preset="developer"/)
+
+  engine.declare({ agent: 'team:reviewer', capability: 'code.review', statement: 'review a diff and list findings' })
+  const team = engine.select({ capability: 'code.review', need: 'review it' }, { sessionId: SESSION.id, turn: 1 })
+  assert.match(team.guidance, /spawn or message teammate "reviewer"/)
+
+  engine.declare({ agent: 'bot:Alice', capability: 'research.brief', statement: 'write a sourced brief on a topic' })
+  const bot = engine.select({ capability: 'research.brief', need: 'write a brief' }, { sessionId: SESSION.id, turn: 1 })
+  assert.match(bot.guidance, /message_bot/)
+})

@@ -179,9 +179,7 @@ export class PromiseEngine {
       candidates: candidates.slice(0, 5),
       level: planned.level,
       levelReasons: planned.reasons,
-      guidance: recommended.invoke?.kind === 'subagent'
-        ? `invoke subagent with agent_preset="${recommended.invoke.agentPreset}", then call promise_settle with jobId "${job.id}"`
-        : `invoke ${recommended.agent}, then call promise_settle with jobId "${job.id}"`,
+      guidance: guidanceFor(recommended.invoke, job.id),
     }
   }
 
@@ -766,6 +764,24 @@ export class PromiseEngine {
       promise: { ...promise, probationPasses: passes, updatedAt: nowIso(), version: promise.version + 1 },
     })
     return { action: 'probation-progress', passes }
+  }
+}
+
+function guidanceFor(hint, jobId) {
+  const settle = `then call promise_settle with jobId "${jobId}"`
+  switch (hint?.kind) {
+    case 'subagent':
+      return `invoke a subagent with agent_preset="${hint.agentPreset}" when the subagent tool is mounted, ${settle}`
+    case 'team':
+      return `spawn or message teammate "${hint.member}" (spawn_teammate / send_message), ${settle}`
+    case 'bot':
+      return `send the task to DS Bot "${hint.bot}" with message_bot when ds-bot is installed, ${settle}`
+    case 'tool':
+      return `call the "${hint.tool}" tool, ${settle}`
+    case 'composition':
+      return `run the "${hint.name}" composition, ${settle}`
+    default:
+      return `invoke ${hint?.agent ?? 'the recommended agent'}, ${settle}`
   }
 }
 

@@ -44,6 +44,19 @@ const candidateSchema = {
     count: integer('number of assessments'),
     score: number('final routing score'),
     reasons: stringArray('why this candidate ranked here'),
+    invoke: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        kind: string('subagent | team | bot | tool | composition | other', { required: true }),
+        agentPreset: string('subagent preset'),
+        member: string('Agent Teams member name'),
+        bot: string('ds-bot name'),
+        tool: string('tool name'),
+        name: string('composition name'),
+        agent: string('raw agent id'),
+      },
+    },
   },
 }
 
@@ -236,6 +249,7 @@ export function buildTools(engine, collector, log) {
           count: candidate.count,
           score: candidate.score,
           reasons: candidate.reasons,
+          invoke: candidate.invoke,
         })),
         guidance: result.guidance,
         text: lines.join('\n'),

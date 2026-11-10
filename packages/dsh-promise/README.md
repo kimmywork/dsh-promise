@@ -76,6 +76,20 @@ trust 0.5 → 0.591 (1 assessments, mass 1.84)
 
 `relative` 在证据不足时固定为 0.5（中性），不会因为「没有基线」而惩罚代理。
 
+### Agent 类型与调用提示
+
+`promise_select` 会按 agent id 的前缀给出具体的调用建议，不假设只有一种委派方式：
+
+| agent id | 含义 | `select` 的提示 |
+|---|---|---|
+| `preset:<name>` | 一个 agent preset | 挂载了 subagent 工具时，用 `agent_preset=<name>` 发起子代理 |
+| `team:<name>` | Agent Teams 成员（Lead 或 teammate） | `spawn_teammate` / `send_message` 给 `<name>` |
+| `bot:<name>` | DS Bot 的长期 bot（可选，需安装 `ds-bot`） | `message_bot` 发给 `<name>` |
+| `tool:<name>` | 单个工具 | 直接调用该工具 |
+| `compose:<name>` | 超级代理 | 运行该组合 |
+
+三种委派方式共用同一套承诺、结算与信任逻辑；ds-bot 没安装时 `bot:` 只是不会被用到，不影响其他类型。
+
 ### 声明一个 Developer Agent
 
 ```jsonc

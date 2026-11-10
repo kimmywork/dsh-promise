@@ -97,11 +97,17 @@ export function rankCandidates(input) {
   return { candidates, eligible: candidates.length }
 }
 
-/** Turn an agent id into a concrete invocation hint the model can act on. */
+/**
+ * Turn an agent id into a concrete invocation hint the model can act on.
+ * Supported families: `preset:` (subagent), `team:` (Agent Teams member),
+ * `bot:` (ds-bot, optional), `tool:`, and `compose:`.
+ */
 export function invokeHint(agent) {
   const value = String(agent)
   if (value.startsWith('preset:')) return { kind: 'subagent', agentPreset: value.slice('preset:'.length) }
+  if (value.startsWith('team:')) return { kind: 'team', member: value.slice('team:'.length) }
+  if (value.startsWith('bot:')) return { kind: 'bot', bot: value.slice('bot:'.length) }
   if (value.startsWith('tool:')) return { kind: 'tool', tool: value.slice('tool:'.length) }
-  if (value.startsWith('compose:')) return { kind: 'subagent', composition: value.slice('compose:'.length) }
+  if (value.startsWith('compose:')) return { kind: 'composition', name: value.slice('compose:'.length) }
   return { kind: 'other', agent: value }
 }
