@@ -75,13 +75,12 @@ spawn_teammate(name, prompt) ──post-execute──▶ job（隐式 select）
 | preset 有多条承诺 | 需要 `promise_select` | 同上 |
 | 本部署（Agent Teams profile） | subagent 工具被禁用 | 实际走 team 路径；代码路径仅单测覆盖 |
 
-### ds-bot
+### ds-bot（暂缓）
 
-| 场景 | 是否需要额外调用 | 说明 |
-|---|---|---|
-| `message_bot` | **不能自动** | 工具结果没有 bot 的 session id，插件无法关联到 bot 会话；必须手动 `promise_settle` |
+当前**不在范围内**：`message_bot` 的工具结果没有 bot 的 session id，插件无法关联到 bot 会话，也不能自动结算。
+代码里 `bot:` 前缀和提示仍保留（显式声明/手动 settle 可用），但不在 UI 或自动接入里承诺支持。
 
-结论：**Agent Teams 可以无感（单承诺）；subagent 在带 preset 时可以无感；bot 不行**。多承诺是唯一需要一次 `promise_select` 的自动路径缺口。
+结论：**Agent Teams 可以无感（单承诺）；subagent 在带 preset 时可以无感；ds-bot 暂缓**。多承诺是唯一需要一次 `promise_select` 的自动路径缺口。
 
 ---
 
@@ -116,7 +115,46 @@ Lead                     DSH tools               plugin                    child
 | Jev 连接 | 插件页 `promise` 行的配置表单 | `lib/client.js` |
 | 信任总览 | `promise_inspect({what:"trust"})` 文本表 | `engine.inspect` |
 
-**已知 UI 缺口**：背景结算没有工具调用可挂卡片。v2 方案是在会话头部加一个只读面板（`conversation.session.header.actions` slot + host Remote），显示本会话的 promise/job/最近结算；这需要 host Remote 与 client 组件，不在 P0 范围。
+### 在「子智能体 / 智能体团队」面板上标注 promise 与 credit
+
+先说限制：这两个面板的成员行都是各自插件的内部组件，**没有暴露行级 slot**：
+
+- `dsh-client-ui-subagent` 只暴露 `conversation.session.header.actions` / `header.lineage` / `sidebar.*`，行内容来自 `subagentCatalog` 投影；
+- `dsh-client-ui-agent-team` 只暴露 `conversation.session.header.actions`，成员卡是内部渲染。
+
+所以「直接在那两行上加 badge」需要上游新增 slot，例如：
+
+```text
+agentTeam.member.badge     (member) -> ReactNode
+subagent.row.meta          (session) -> ReactNode
+```
+
+在不动上游的前提下，可行的自建面是**一个同级 header action + 面板**，同时覆盖两类：
+
+```text
+┌ 页头：…  [3 个子智能体]  [智能体团队]  [Promise 3 · 0.58] ┐
+│                                                          │
+│  Team members                                             │
+│   ● code-reviewer   code.review.plugin   0.58 ▁▂▃  2 次   │
+│   ○ history-rewriter repo.history-rewrite 0.50  —   0 次  │
+│                                                          │
+│  Subagents                                                │
+│   ● run 21s         code.change           0.62 ▁▃▅  1 次   │
+│                                                          │
+│  最近结算  fulfilled  L3  0.86  [账本 #41]                │
+└──────────────────────────────────────────────────────────┘
+```
+
+每行建议显示：`name/title`、`capability`、`credit = trust（lower · 证据数）`、最近 verdict 状态点（绿/黄/红/灰）、`probation/suspended` 标签；展开后显示 promise statement、QoS、最近 3 条评估（verdict、三层分、model、confidence）与账本序号。
+
+数据映射：team 成员 / subagent 的 **child sessionId** → 账本里 `job.delegation.sessionId` → job → promise → 该 `(agent, capability)` 的 trust。这样两类面板可以用同一份快照。
+
+实现路径（建议）：
+1. host 侧加一个只读 Remote `promiseInventory.snapshot(sessionId)`（`TypertRemoteService` + `@Remote`），返回上面这份快照；
+2. client 侧在 `conversation.session.header.actions` 注册一个按钮 + 面板（React，复用现有 header action 样式）；
+3. 行级 badge 作为上游 slot 提案，等 `ui-subagent` / `ui-agent-team` 接受后再接。
+
+**已知缺口**：背景自动结算没有工具调用可挂卡片；这个面板正好补上「最近结算」视图。
 
 ---
 
