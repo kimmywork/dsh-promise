@@ -123,16 +123,11 @@ window.__ModuleLoader__.load({
       },
       dialog: {
         position: 'fixed',
-        top: '56px',
-        right: '24px',
-        left: 'auto',
-        bottom: 'auto',
         margin: 0,
         padding: 0,
         border: 0,
         background: 'transparent',
         color: 'inherit',
-        width: '380px',
         maxWidth: 'calc(100vw - 32px)',
         maxHeight: 'calc(100vh - 80px)',
         overflow: 'visible',
@@ -288,6 +283,7 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = react.useState('idle')
       const [loaded, setLoaded] = react.useState(false)
       const dialogRef = react.useRef(null)
+      const triggerRef = react.useRef(null)
 
       const fetchSnapshot = () => {
         if (loaded) return
@@ -310,9 +306,25 @@ window.__ModuleLoader__.load({
           })
       }
 
+      const placePanel = () => {
+        const dialog = dialogRef.current
+        const trigger = triggerRef.current
+        if (!dialog || !trigger || typeof trigger.getBoundingClientRect !== 'function') return
+        const rect = trigger.getBoundingClientRect()
+        const viewport = typeof window === 'undefined' ? 1440 : window.innerWidth
+        const width = Math.max(240, Math.min(380, viewport - 32))
+        const left = Math.max(12, Math.min(Math.round(rect.left), viewport - width - 12))
+        dialog.style.top = `${Math.round(rect.bottom + 6)}px`
+        dialog.style.left = `${left}px`
+        dialog.style.right = 'auto'
+        dialog.style.bottom = 'auto'
+        dialog.style.width = `${width}px`
+      }
+
       const openPanel = () => {
         const dialog = dialogRef.current
         if (!dialog) return
+        placePanel()
         // showModal puts the panel in the browser top layer, so neither the
         // conversation's overflow nor any ancestor stacking context can hide it.
         if (typeof dialog.showModal === 'function') {
@@ -371,6 +383,7 @@ window.__ModuleLoader__.load({
       }, [
         react.createElement('button', {
           key: 'trigger',
+          ref: triggerRef,
           type: 'button',
           style: styles.trigger,
           'data-promise-credits': 'trigger',
