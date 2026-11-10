@@ -57,8 +57,8 @@ esac
 PROFILE_DIR="$DSH_HOME/profiles/$PROFILE_NAME"
 
 if [[ "$FROM" == "npm" ]]; then
-  SOURCE_LINE="  source  : npm registry (@kenpusney/dsh-promise@experimental)"
-  INSTALL_CMD='pnpm add --force @kenpusney/dsh-promise@experimental'
+  SOURCE_LINE="  source  : npm registry (@unsafe/dsh-promise@experimental)"
+  INSTALL_CMD='pnpm add --force @unsafe/dsh-promise@experimental'
   SOURCE_NOTE='   Published on the "experimental" dist-tag; there is no "latest" tag until
    the first stable release, so always pin the tag when installing.'
 else
@@ -68,7 +68,7 @@ else
 fi
 
 cat <<EOF
-@kenpusney/dsh-promise — profile "$PROFILE_NAME"
+@unsafe/dsh-promise — profile "$PROFILE_NAME"
 $SOURCE_LINE
   profile : $PROFILE_DIR
 
@@ -78,18 +78,18 @@ $SOURCE_NOTE
      cd "$PROFILE_DIR"
      $INSTALL_CMD
 
-   @kenpusney/dsh-promise is a bundle (package.json -> dsh.bundle), so after this it shows
+   @unsafe/dsh-promise is a bundle (package.json -> dsh.bundle), so after this it shows
    up in the sidebar 插件 page as an installed bundle you can toggle.
    Restart DSH, open 插件 -> 已安装插件 -> dsh-promise, then turn it on.
    (Without restart, the plugin manager may not see the new bundle manifest.)
 
 2. Manual alternative (skip the 插件 page and enable by YAML):
 
-   Add "@kenpusney/dsh-promise" to dsh.profile.bundles in $PROFILE_DIR/package.json,
+   Add "@unsafe/dsh-promise" to dsh.profile.bundles in $PROFILE_DIR/package.json,
    or paste this row into $PROFILE_DIR/cordis.patch.yml (top-level list):
 
   - id: promise
-    name: "@kenpusney/dsh-promise"
+    name: "@unsafe/dsh-promise"
     config:
       enabled: true
       jev:
@@ -122,8 +122,8 @@ if [[ "$APPLY" == "1" ]]; then
   fi
   echo
   if [[ "$FROM" == "npm" ]]; then
-    echo "==> pnpm add --force @kenpusney/dsh-promise@experimental (in $PROFILE_DIR)"
-    (cd "$PROFILE_DIR" && pnpm add --force @kenpusney/dsh-promise@experimental)
+    echo "==> pnpm add --force @unsafe/dsh-promise@experimental (in $PROFILE_DIR)"
+    (cd "$PROFILE_DIR" && pnpm add --force @unsafe/dsh-promise@experimental)
   else
     echo "==> pnpm add --force file:$PKG_DIR (in $PROFILE_DIR)"
     (cd "$PROFILE_DIR" && pnpm add --force "file:$PKG_DIR")

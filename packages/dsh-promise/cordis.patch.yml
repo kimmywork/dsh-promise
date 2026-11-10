@@ -4,7 +4,7 @@
 # profile patch layer can override config by targeting it.
 - insert:
     - id: promise
-      name: "@kenpusney/dsh-promise"
+      name: "@unsafe/dsh-promise"
       config:
         enabled: true
         jev:

@@ -36,7 +36,7 @@
 
 ```bash
 cd ~/.dsh/profiles/desktop
-pnpm add --force @kenpusney/dsh-promise@experimental
+pnpm add --force @unsafe/dsh-promise@experimental
 ```
 
 或从本仓库 checkout 安装：
@@ -55,11 +55,11 @@ cd ~/.dsh/profiles/desktop && pnpm remove dsh-promise
 然后重启 DSH，打开侧栏 **插件 → 已安装插件 → dsh-promise**，用它自己的开关启用。
 （刚装完没出现时先点一次「刷新」；副本是安装时的快照，源码改动后要重新 `pnpm add --force`。）
 
-不想用 UI 就在 profile 的 `package.json` 里把 `@kenpusney/dsh-promise` 加进 `dsh.profile.bundles`，或把这一行加进 `cordis.patch.yml`：
+不想用 UI 就在 profile 的 `package.json` 里把 `@unsafe/dsh-promise` 加进 `dsh.profile.bundles`，或把这一行加进 `cordis.patch.yml`：
 
 ```yaml
 - id: promise
-  name: "@kenpusney/dsh-promise"
+  name: "@unsafe/dsh-promise"
   config:
     enabled: true
     jev:
@@ -268,7 +268,7 @@ policy = model + provider + agent preset + system prompt hash + tools hash + pro
 
 ```yaml
 - id: promise
-  name: "@kenpusney/dsh-promise"
+  name: "@unsafe/dsh-promise"
   config:
     enabled: true
     dataDir: ''                  # 默认 $DSH_HOME/promise

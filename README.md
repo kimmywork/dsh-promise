@@ -26,7 +26,7 @@
 
 ## 安装（快速开始）
 
-npm 包名是 `@kenpusney/dsh-promise`（`experimental` dist-tag）；从本仓库 checkout 安装时用下面的 `install.sh`。
+npm 包名是 `@unsafe/dsh-promise`（`experimental` dist-tag）；从本仓库 checkout 安装时用下面的 `install.sh`。
 
 需要 Node ≥ 20.11，纯 ESM，无构建步骤。插件是 DSH bundle，安装本身需要你手动执行 `pnpm add`：
 
