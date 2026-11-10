@@ -125,7 +125,7 @@ window.__ModuleLoader__.load({
         position: 'fixed',
         top: '64px',
         right: '24px',
-        zIndex: 1200,
+        zIndex: 10000,
         width: '380px',
         maxHeight: '440px',
         overflow: 'auto',
@@ -266,40 +266,35 @@ window.__ModuleLoader__.load({
 
     function PromiseCreditsAction(props) {
       const { sessionId, load, t } = props
-      const [open, setOpen] = react.useState(false)
       const [snapshot, setSnapshot] = react.useState(null)
       const [status, setStatus] = react.useState('idle')
+      const [loaded, setLoaded] = react.useState(false)
 
-      react.useEffect(() => {
-        if (!open) return undefined
-        let cancelled = false
+      // Native <details> owns the open state, so a slot remount cannot swallow
+      // the click and no React state update is needed just to show the panel.
+      const onToggle = (event) => {
+        if (!event.currentTarget.open || loaded) return
+        setLoaded(true)
         if (!sessionId) {
           setSnapshot({ error: 'no session id' })
           setStatus('error')
-          return undefined
+          return
         }
         setStatus('loading')
         Promise.resolve()
           .then(() => load(sessionId))
           .then((value) => {
-            if (cancelled) return
             setSnapshot(value)
             setStatus('ready')
           })
           .catch((error) => {
-            if (cancelled) return
             setSnapshot({ error: String(error?.message ?? error) })
             setStatus('error')
           })
-        return () => {
-          cancelled = true
-        }
-      }, [open, sessionId])
+      }
 
       const header = snapshot?.header
-      const label = header
-        ? `${t('action')} ${header.promises} · ${Number(header.credit).toFixed(2)}`
-        : t('action')
+      const label = `${t('action')}${header ? ` ${header.promises} · ${Number(header.credit).toFixed(2)}` : ''} ▾`
 
       const rows = []
       if (snapshot && snapshot.rows) {
@@ -333,34 +328,42 @@ window.__ModuleLoader__.load({
             ? react.createElement('p', { style: styles.hint }, t('creditsEmpty'))
             : rows
 
-      return react.createElement('span', { style: { position: 'relative', display: 'inline-flex' } }, [
-        react.createElement('button', {
+      return react.createElement('details', {
+        key: 'credits',
+        style: { position: 'relative', display: 'inline-block' },
+        'data-promise-credits': 'root',
+        onToggle,
+      }, [
+        react.createElement('summary', {
           key: 'trigger',
-          type: 'button',
-          style: styles.trigger,
-          'aria-expanded': open,
-          onClick: () => setOpen((value) => !value),
+          style: { ...styles.trigger, listStyle: 'none' },
+          'data-promise-credits': 'trigger',
         }, label),
-        open
-          ? react.createElement('div', { key: 'panel', 'data-promise-credits': 'panel', style: styles.panel }, [
-            react.createElement('div', { key: 'title', style: styles.panelTitle }, [
-              react.createElement('span', { key: 'label' }, t('creditsTitle')),
-              react.createElement('button', {
-                key: 'close',
-                type: 'button',
-                style: { ...styles.button, padding: '2px 8px' },
-                onClick: () => setOpen(false),
-              }, t('creditsClose')),
-            ]),
-            body,
-            recent.length > 0
-              ? react.createElement('div', { key: 'recent' }, [
-                react.createElement('div', { key: 'recentTitle', style: { ...styles.label, marginTop: '8px' } }, t('creditsRecent')),
-                ...recent,
-              ])
-              : react.createElement('p', { key: 'noRecent', style: { ...styles.hint, marginTop: '8px' } }, t('creditsNoRecent')),
-          ])
-          : null,
+        react.createElement('div', {
+          key: 'panel',
+          'data-promise-credits': 'panel',
+          style: styles.panel,
+        }, [
+          react.createElement('div', { key: 'title', style: styles.panelTitle }, [
+            react.createElement('span', { key: 'label' }, t('creditsTitle')),
+            react.createElement('button', {
+              key: 'close',
+              type: 'button',
+              style: { ...styles.button, padding: '2px 8px' },
+              onClick: (event) => {
+                const details = event.currentTarget.closest('details')
+                if (details) details.open = false
+              },
+            }, t('creditsClose')),
+          ]),
+          body,
+          recent.length > 0
+            ? react.createElement('div', { key: 'recent' }, [
+              react.createElement('div', { key: 'recentTitle', style: { ...styles.label, marginTop: '8px' } }, t('creditsRecent')),
+              ...recent,
+            ])
+            : react.createElement('p', { key: 'noRecent', style: { ...styles.hint, marginTop: '8px' } }, t('creditsNoRecent')),
+        ]),
       ])
     }
 
