@@ -137,7 +137,7 @@ window.__ModuleLoader__.load({
         color: 'var(--dsw-alias-label-primary)',
       },
       panelTitle: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: 600, marginBottom: '6px' },
-      row: { display: 'flex', flexDirection: 'column', gap: '2px', padding: '6px 4px', borderTop: '1px solid var(--dsw-alias-border-l1)' },
+      creditRow: { display: 'flex', flexDirection: 'column', gap: '2px', padding: '6px 4px', borderTop: '1px solid var(--dsw-alias-border-l1)' },
       rowHead: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' },
       dot: { width: '7px', height: '7px', borderRadius: '50%', flex: 'none' },
       name: { fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -291,6 +291,8 @@ window.__ModuleLoader__.load({
         }
       }, [open, sessionId])
 
+      if (!sessionId) return null
+
       const header = snapshot?.header
       const label = header
         ? `${t('action')} ${header.promises} · ${Number(header.credit).toFixed(2)}`
@@ -299,7 +301,7 @@ window.__ModuleLoader__.load({
       const rows = []
       if (snapshot && snapshot.rows) {
         for (const row of snapshot.rows) {
-          rows.push(react.createElement('div', { key: `${row.agent}:${row.capability}`, style: styles.row }, [
+          rows.push(react.createElement('div', { key: `${row.agent}:${row.capability}`, style: styles.creditRow }, [
             react.createElement('div', { key: 'head', style: styles.rowHead }, [
               react.createElement('span', { key: 'dot', style: { ...styles.dot, background: creditColor(row) } }),
               react.createElement('span', { key: 'name', style: styles.name }, row.name || row.agent),
@@ -359,18 +361,97 @@ window.__ModuleLoader__.load({
       ])
     }
 
-    function apply(ctx) {
-    const inject = ['slots', 'locale', 'remote']
+    /**
+     * Hand-written Client contribution for the read-only snapshot Remote. The
+     * generated artifact normally comes from the Typert compiler; this package is
+     * outside the monorepo, so the single descriptor is declared here and mounted
+     * through the same `remote.$mount` contract the generated artifacts use.
+     */
+    const SNAPSHOT_DESCRIPTOR = {
+      id: 'dsh-promise#promiseInventory/snapshot',
+      service: 'promiseInventory',
+      namespace: 'promiseInventory',
+      method: 'snapshot',
+      description: 'Read the promise and credit snapshot for one session.',
+      invocation: { kind: 'direct' },
+      parameters: [{
+        name: 'sessionId',
+        wire: 'sessionId',
+        source: 'json',
+        codec: {
+          mode: 'strict',
+          typeSymbol: 'dsh-promise#SessionId',
+          create: () => null,
+          jsonSchema: { type: 'string' },
+        },
+      }],
+      result: {
+        mode: 'strict',
+        typeSymbol: 'dsh-promise#PromiseSnapshot',
+        create: () => null,
+        jsonSchema: { type: 'object' },
+      },
+    }
 
+    const headerSlot = (ctx, t) => ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+      name: 'conversation.session.header.actions',
+      id: 'promise-credits',
+      order: 55,
+      locale: NS,
+      // `scope: session` slots pass the parent session id as the first argument.
+      inject: (sessionId) => ({
+        sessionId: sessionId ? String(sessionId) : undefined,
+        load: (id) => loadSnapshot(ctx, id),
+        t,
+      }),
+    }, PromiseCreditsAction))
+
+    function registerCreditsAction(ctx, t) {
+      let disposed = false
+      let release
+      let pending
+      try {
+        if (typeof ctx.remote?.$mount !== 'function') return
+        pending = ctx.remote.$mount({ package: 'dsh-promise', descriptors: [SNAPSHOT_DESCRIPTOR] })
+      } catch {
+        return
+      }
+      if (typeof ctx.effect === 'function') {
+        ctx.effect(() => () => {
+          disposed = true
+          if (typeof release === 'function') release()
+        }, 'dsh-promise: inventory remote')
+      }
+      Promise.resolve(pending)
+        .then((dispose) => {
+          release = dispose
+          if (disposed) {
+            if (typeof dispose === 'function') dispose()
+            return
+          }
+          try {
+            headerSlot(ctx, t)
+          } catch {
+            if (typeof dispose === 'function') dispose()
+          }
+        })
+        .catch(() => {
+          // No published namespace: keep the plugin usable and just omit the panel.
+        })
+    }
+
+    const inject = ['slots', 'locale']
+
+    function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-promise: dictionaries')
       const t = ctx.locale.bind(NS)
-      ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
-        name: 'conversation.session.header.actions',
-        id: 'promise-credits',
-        order: 55,
-        locale: NS,
-        inject: () => ({ load: (sessionId) => loadSnapshot(ctx, sessionId), t }),
-      }, PromiseCreditsAction))
+
+      // The credit panel needs the Client Remote face. Wait for it separately so
+      // a composition without the API gateway still gets the settings form.
+      if (typeof ctx.inject === 'function') {
+        ctx.inject(['remote'], (scope) => registerCreditsAction(scope, t))
+      }
+
       ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
         name: 'plugins.row.config',
         key: 'dsh-promise#promise',

@@ -15,8 +15,17 @@
 ## 状态
 
 - P0，Node ≥ 20.11，纯 ESM，无构建步骤。
-- 100 个离线单元测试（`npm test`），不触网。
+- 109 个离线单元测试（`npm test`），不触网。
 - `tools/calibrate.js` 用于在真实数据上校准评估器；**未校准前不要让语义证据单独决定信任**（见下文）。
+
+### 0.1.1 修复的启动故障
+
+0.1.0 的客户端模块把 `inject` 声明写在了 `apply()` 内部，模块工厂执行时抛
+`ReferenceError: inject is not defined`，导致 Web boot 报
+`dsh-promise: import failed`、整个界面无法激活。0.1.1 把它移到模块作用域，
+并新增 `test/client.test.js`：**直接执行客户端工厂**，同时覆盖 Remote 缺失时
+自动隐藏信用面板的降级路径。宿主侧的 Typert 协议导入也改为惰性、可失败，
+缺少该 peer 时插件仍能启动（只是没有信用面板）。
 
 ---
 
@@ -335,7 +344,7 @@ src/
   collector.js   会话事件采集
   tools.js       五个模型侧工具
   prompt.js      静态协议段（无承诺时为空）
-test/            100 个离线测试
+test/            109 个离线测试
 tools/           calibrate.js
 examples/        示例承诺
 ```

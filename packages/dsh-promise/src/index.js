@@ -17,7 +17,6 @@ import { buildTools } from './tools.js'
 import { PROTOCOL_TEXT } from './prompt.js'
 import { blocksToText } from './util.js'
 import { buildSnapshot } from './inventory.js'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 
 export { Config }
 
@@ -113,45 +112,59 @@ export function apply(ctx, config) {
     ctx.tools.register(tool)
   }
 
-  // Read-only inventory for the client Promise panel. The typert artifact is
+  // Read-only inventory for the client Promise panel. The Typert artifact is
   // generated in the upstream monorepo; here the service is marked at runtime
   // and the client falls back to hiding the panel if the namespace is absent.
-  try {
-    class PromiseInventoryGateway extends TypertRemoteService {
-      constructor(gatewayCtx) {
-        super(gatewayCtx, 'promiseInventory')
-      }
-
-      async snapshot(sessionId) {
-        let memberById
-        try {
-          const teams = services.getTeams()
-          const agent = ctx.get('agents')?.get(String(sessionId))
-          if (teams && agent) {
-            memberById = (childId) => teams.listMembers(agent).find((member) => String(member.id) === String(childId))
-          }
-        } catch {
-          // Roster unavailable: rows still come from the ledger.
-        }
-        return buildSnapshot({ engine, sessionId: String(sessionId), memberById })
-      }
+  // Both the import and the registration are best-effort: a profile without the
+  // Typert protocol must still boot the rest of the plugin.
+  async function registerInventoryGateway() {
+    let Remote
+    let TypertRemoteService
+    try {
+      ({ Remote, TypertRemoteService } = await import('@deepseek-ai/dsh-typert-protocol'))
+    } catch (error) {
+      log('warn', `promiseInventory gateway unavailable: ${error?.message ?? error}`)
+      return
     }
-    const initializers = []
-    Remote('snapshot')(PromiseInventoryGateway.prototype.snapshot, {
-      kind: 'method',
-      name: 'snapshot',
-      static: false,
-      private: false,
-      metadata: {},
-      addInitializer(initializer) {
-        initializers.push(initializer)
-      },
-    })
-    for (const initialize of initializers) initialize.call(Object.create(PromiseInventoryGateway.prototype))
-    ctx.plugin(PromiseInventoryGateway)
-  } catch (error) {
-    log('warn', `promiseInventory gateway unavailable: ${error?.message ?? error}`)
+    try {
+      class PromiseInventoryGateway extends TypertRemoteService {
+        constructor(gatewayCtx) {
+          super(gatewayCtx, 'promiseInventory')
+        }
+
+        async snapshot(sessionId) {
+          let memberById
+          try {
+            const teams = services.getTeams()
+            const agent = ctx.get('agents')?.get(String(sessionId))
+            if (teams && agent) {
+              memberById = (childId) => teams.listMembers(agent).find((member) => String(member.id) === String(childId))
+            }
+          } catch {
+            // Roster unavailable: rows still come from the ledger.
+          }
+          return buildSnapshot({ engine, sessionId: String(sessionId), memberById })
+        }
+      }
+      const initializers = []
+      Remote('snapshot')(PromiseInventoryGateway.prototype.snapshot, {
+        kind: 'method',
+        name: 'snapshot',
+        static: false,
+        private: false,
+        metadata: {},
+        addInitializer(initializer) {
+          initializers.push(initializer)
+        },
+      })
+      for (const initialize of initializers) initialize.call(Object.create(PromiseInventoryGateway.prototype))
+      await ctx.plugin(PromiseInventoryGateway)
+    } catch (error) {
+      log('warn', `promiseInventory gateway unavailable: ${error?.message ?? error}`)
+    }
   }
+
+  void registerInventoryGateway()
 
   ctx.systemPrompt.section({
     name: 'promise:protocol',

@@ -154,7 +154,14 @@ subagent.row.meta          (session) -> ReactNode
 2. client 侧在 `conversation.session.header.actions` 注册一个按钮 + 面板（React，复用现有 header action 样式）；
 3. 行级 badge 作为上游 slot 提案，等 `ui-subagent` / `ui-agent-team` 接受后再接。
 
-**已实现（A）**：会话头部新增 `承诺 N · credit` 按钮，点开是本会话的 team/subagent 行列（capability、trust/lower/证据数、最近 verdict）与最近 5 条结算。数据来自 host 的只读 Remote `promiseInventory.snapshot(sessionId)`（`src/index.js` 运行时标记 + `src/inventory.js` 快照）；client 在 namespace 未发布时**自动隐藏按钮**，不影响插件页。仍需重启后做一次真实验证。
+**已实现（A）**：会话头部新增 `承诺 N · credit` 按钮，点开是本会话的 team/subagent 行列（capability、trust/lower/证据数、最近 verdict）与最近 5 条结算。数据来自 host 的只读 Remote `promiseInventory.snapshot(sessionId)`（`src/index.js` 运行时标记 + `src/inventory.js` 快照）。
+
+这个包不在 DSH monorepo 内，没有 Typert 生成器产物，因此 client 侧在 `lib/client.js` 里手写了单条 Remote descriptor，并通过 `ctx.remote.$mount()` 挂载；host 侧的 `TypertRemoteService` + `Remote('snapshot')` 标记由 Gateway 的 SRC fallback 发现。两条链路都是**尽力而为**：
+
+- Client：`$mount` 失败（namespace 未发布/降级组合）时**不注册按钮**，插件页与工具不受影响；
+- Host：`@deepseek-ai/dsh-typert-protocol` 导入失败或服务注册失败时只记一条 warn，插件其余部分照常启动。
+
+0.1.1 修复了 client 工厂的 `inject is not defined`（它会让整个 Web boot 失败），并补了直接执行客户端工厂的回归测试。
 
 ---
 

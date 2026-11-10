@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { Context } from '@deepseek-ai/cordis'
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import { apply, Config, inject, name } from '../src/index.js'
 import { tempDir } from './helpers.js'
@@ -144,4 +145,26 @@ test('a bound delegation result carries a promise annotation for the tool card',
   const decision = await handler(exec, result, async () => ({ kind: 'accept' }))
   assert.equal(decision.kind, 'accept')
   assert.ok(decision.content.some((block) => block.type === 'text' && block.text.includes('promise code.solo')))
+})
+
+test('boots on a real Cordis context and publishes the inventory Remote', async () => {
+  const ctx = new Context()
+  const tools = []
+  ctx.provide('tools', { register: (tool) => { tools.push(tool); return () => {} } })
+  ctx.provide('systemPrompt', { section: () => () => {} })
+  ctx.provide('sessions', { get: () => null })
+
+  // The exact call a loader makes: no fake `plugin`/`effect`, so a regression in
+  // the optional Typert gateway would surface here as a boot failure.
+  apply(ctx, Config({ dataDir: tempDir(), jev: { enabled: false } }))
+  assert.equal(tools.length, 6)
+
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  const inventory = ctx.get('promiseInventory')
+  assert.equal(typeof inventory?.snapshot, 'function')
+
+  const snapshot = await inventory.snapshot('session-with-no-jobs')
+  assert.equal(snapshot.sessionId, 'session-with-no-jobs')
+  assert.equal(snapshot.header.promises, 0)
+  assert.deepEqual(snapshot.rows, [])
 })
