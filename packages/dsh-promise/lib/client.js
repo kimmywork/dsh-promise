@@ -281,30 +281,51 @@ window.__ModuleLoader__.load({
       const { sessionId, load, t } = props
       const [snapshot, setSnapshot] = react.useState(null)
       const [status, setStatus] = react.useState('idle')
-      const [loaded, setLoaded] = react.useState(false)
+      const [error, setError] = react.useState(null)
       const dialogRef = react.useRef(null)
       const triggerRef = react.useRef(null)
+      const refreshRef = react.useRef(null)
 
-      const fetchSnapshot = () => {
-        if (loaded) return
-        setLoaded(true)
-        if (!sessionId) {
-          setSnapshot({ error: 'no session id' })
-          setStatus('error')
-          return
+      // Load on mount and keep the badge fresh: the ledger can change from a
+      // settlement or an auto-bound delegation while this header is mounted.
+      react.useEffect(() => {
+        if (!sessionId) return undefined
+        let cancelled = false
+        let inFlight = false
+        const refresh = () => {
+          if (inFlight) return
+          inFlight = true
+          Promise.resolve()
+            .then(() => load(sessionId))
+            .then((value) => {
+              if (cancelled) return
+              setSnapshot(value)
+              setStatus('ready')
+              setError(null)
+            })
+            .catch((cause) => {
+              if (cancelled) return
+              setStatus('error')
+              setError(String(cause?.message ?? cause))
+            })
+            .finally(() => {
+              inFlight = false
+            })
         }
-        setStatus('loading')
-        Promise.resolve()
-          .then(() => load(sessionId))
-          .then((value) => {
-            setSnapshot(value)
-            setStatus('ready')
-          })
-          .catch((error) => {
-            setSnapshot({ error: String(error?.message ?? error) })
-            setStatus('error')
-          })
-      }
+        refreshRef.current = refresh
+        refresh()
+        const timer = setInterval(refresh, 4000)
+        const onVisibility = () => {
+          if (typeof document !== 'undefined' && document.visibilityState === 'visible') refresh()
+        }
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
+        return () => {
+          cancelled = true
+          refreshRef.current = null
+          clearInterval(timer)
+          if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
+        }
+      }, [sessionId, load])
 
       const placePanel = () => {
         const dialog = dialogRef.current
@@ -332,7 +353,7 @@ window.__ModuleLoader__.load({
         } else {
           dialog.setAttribute('open', '')
         }
-        fetchSnapshot()
+        refreshRef.current?.()
       }
 
       const closePanel = () => {
@@ -369,10 +390,10 @@ window.__ModuleLoader__.load({
         style: styles.meta,
       }, `${entry.verdict} · L${entry.level} · ${Number(entry.confidence).toFixed(2)} · ${entry.capability}`))
 
-      const body = status === 'loading'
-        ? react.createElement('p', { style: styles.hint }, t('creditsLoading'))
-        : status === 'error'
-          ? react.createElement('p', { style: styles.error }, `${t('creditsError')}: ${snapshot?.error ?? ''}`)
+      const body = status === 'error' && !snapshot
+        ? react.createElement('p', { style: styles.error }, `${t('creditsError')}: ${error ?? ''}`)
+        : !snapshot
+          ? react.createElement('p', { style: styles.hint }, t('creditsLoading'))
           : rows.length === 0
             ? react.createElement('p', { style: styles.hint }, t('creditsEmpty'))
             : rows
@@ -412,6 +433,9 @@ window.__ModuleLoader__.load({
                 onClick: closePanel,
               }, t('creditsClose')),
             ]),
+            status === 'error' && snapshot
+              ? react.createElement('p', { key: 'stale', style: styles.error }, `${t('creditsError')}: ${error ?? ''}`)
+              : null,
             body,
             recent.length > 0
               ? react.createElement('div', { key: 'recent' }, [
