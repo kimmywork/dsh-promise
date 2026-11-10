@@ -4,6 +4,8 @@
  * @module dsh-promise/tools
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { blocksToText } from './util.js'
+import { invokeHint } from './router.js'
 
 const string = (description, extra = {}) => ({ type: 'string', description, ...extra })
 const number = (description) => ({ type: 'number', description })
@@ -65,7 +67,7 @@ const candidateSchema = {
  * @param {import('./collector.js').SessionCollector} collector
  * @param {(level:string, message:string)=>void} log
  */
-export function buildTools(engine, collector, log) {
+export function buildTools(engine, collector, log, deps = {}) {
   const contextOf = (exec) => {
     const session = exec?.agent?.session
     const sessionId = session?.id ? String(session.id) : undefined
@@ -478,5 +480,131 @@ export function buildTools(engine, collector, log) {
     },
   })
 
-  return [declare, select, settle, inspect, compose]
+
+  const delegate = defineTool({
+    name: 'promise_delegate',
+    description: 'Dispatch an open promise job to its agent and let the plugin settle it when the work finishes: spawns or messages an Agent Teams teammate, or starts a subagent activation, then links the job to the child session. Use this instead of calling spawn_teammate/send_message/subagent directly when the work belongs to a promise.',
+    parameters: {
+      jobId: string('Job id returned by promise_select', { required: true }),
+      prompt: string('Complete initial task for the delegated agent', { required: true }),
+      name: string('Teammate name to spawn or reuse (defaults to the team:<name> in the job)'),
+      description: string('Short responsibility description for a new teammate'),
+      context: string('fresh or fork teammate context', { enum: ['fresh', 'fork'] }),
+      preset: string('Subagent preset override (defaults to the preset in the job agent id)'),
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          jobId: string('job id', { required: true }),
+          dispatched: { type: 'boolean', required: true },
+          family: string('team, subagent or unsupported', { required: true }),
+          memberId: string('child session id'),
+          memberName: string('teammate name or preset'),
+          text: string('human-readable summary', { required: true }),
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: 'Delegate promise job',
+      kind: 'other',
+      rawInput: { jobId: args.jobId, name: args.name },
+    }),
+    presentResult: (_args, value) => ({
+      card: 'generic',
+      title: value.dispatched ? `Delegated to ${value.family}` : 'Delegation failed',
+      content: [{ type: 'text', text: value.text }],
+    }),
+    async execute(args, exec) {
+      const job = engine.state.jobs.get(String(args.jobId))
+      if (!job) throw new Error(`unknown jobId: ${args.jobId}`)
+      if (job.closedAt) throw new Error('job is already settled')
+      const promise = [...engine.state.promises.values()].find((candidate) => candidate.id === job.promiseId)
+      if (!promise) throw new Error('the job promise no longer exists')
+      const hint = invokeHint(job.agent)
+      const content = [{ type: 'text', text: args.prompt }]
+
+      if (hint.kind === 'team') {
+        const teams = deps.getTeams?.()
+        if (!teams) throw new Error('Agent Teams is not mounted in this profile')
+        const name = args.name ?? hint.member ?? String(job.agent).replace(/^team:/, '')
+        const members = teams.listMembers(exec.agent)
+        const existing = members.find((member) => member.name === name)
+        let member
+        if (existing) {
+          await teams.sendMessage(exec.agent, { target: name, content, signal: exec.signal })
+          member = existing
+        } else {
+          const spawned = await teams.spawnTeammate(exec.agent, {
+            name,
+            description: args.description ?? String(job.request ?? promise.statement).slice(0, 200),
+            prompt: content,
+            context: args.context === 'fork' ? 'fork' : 'fresh',
+            provider: args.context === 'fork' ? 'fork' : 'spawn',
+            signal: exec.signal,
+          })
+          member = spawned.member
+        }
+        engine.linkDelegation(args.jobId, {
+          kind: 'team',
+          name: member.name,
+          sessionId: String(member.id),
+          leadAgent: exec.agent,
+          teams,
+        })
+        return clean({
+          jobId: args.jobId,
+          dispatched: true,
+          family: 'team',
+          memberId: String(member.id),
+          memberName: member.name,
+          text: `delegated job ${args.jobId} to teammate ${member.name} (${member.status}); it settles automatically when the teammate goes inactive`,
+        })
+      }
+
+      if (hint.kind === 'subagent') {
+        const subagents = deps.getSubagents?.()
+        if (!subagents) throw new Error('the subagent service is not mounted in this profile')
+        const preset = args.preset ?? hint.agentPreset
+        const activation = await subagents.startActivation({
+          provider: 'spawn',
+          label: `promise ${promise.capability}`.slice(0, 80),
+          request: {
+            prompt: content,
+            parent: exec.agent,
+            signal: exec.signal,
+            ...(preset ? { agentPreset: preset } : {}),
+          },
+          signal: exec.signal,
+          delivery: 'caller',
+        })
+        engine.linkDelegation(args.jobId, {
+          kind: 'subagent',
+          name: preset ?? 'subagent',
+          sessionId: String(activation.childId),
+        })
+        void activation.result
+          .then((result) => engine.settleDelegated(args.jobId, { output: blocksToText(result.output, 32_768) }))
+          .catch((error) => engine.settleDelegated(args.jobId, { error: String(error?.message ?? error) }))
+          .finally(() => {
+            void activation.dispose?.().catch(() => {})
+          })
+        return clean({
+          jobId: args.jobId,
+          dispatched: true,
+          family: 'subagent',
+          memberId: String(activation.childId),
+          memberName: preset,
+          text: `delegated job ${args.jobId} to subagent ${preset ?? '(parent preset)'}; it settles automatically when the activation finishes`,
+        })
+      }
+
+      throw new Error(`promise_delegate does not support ${hint.kind} agents; settle this job manually`)
+    },
+  })
+
+  return [declare, select, settle, delegate, inspect, compose]
 }

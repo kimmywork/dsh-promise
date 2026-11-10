@@ -243,3 +243,103 @@ test('select guidance names the right invocation for each agent family', () => {
   const bot = engine.select({ capability: 'research.brief', need: 'write a brief' }, { sessionId: SESSION.id, turn: 1 })
   assert.match(bot.guidance, /message_bot/)
 })
+
+
+test('a delegated job is linked, skipped by auto-settle, then settled by the child', async () => {
+  const { engine, collector } = makeEngine()
+  declareDev(engine)
+  feedTurn(collector, SESSION, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/a.js' } }], assistant: 'started' })
+  const selected = engine.select({ capability: 'code.change', need: 'fix it', riskTier: 1 }, { sessionId: SESSION.id, turn: 1 })
+  engine.linkDelegation(selected.jobId, { kind: 'team', name: 'dev', sessionId: 'team-session-1' })
+  assert.equal(engine.state.jobs.get(selected.jobId).delegation.kind, 'team')
+
+  // The Lead turn ending must not settle a delegated job with the Lead's own output.
+  await engine.autoSettle(SESSION.id, 1)
+  assert.equal(engine.state.jobs.get(selected.jobId).closedAt, null)
+
+  // The teammate's own turn provides the output and tool traces.
+  const child = { id: 'team-session-1', header: { cwd: process.cwd() } }
+  feedTurn(collector, child, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/b.js' } }], assistant: 'done: fixed src/b.js' })
+  const result = await engine.settleDelegated(selected.jobId)
+  assert.ok(result)
+  assert.equal(result.verdict, 'fulfilled')
+  assert.equal(engine.state.jobs.get(selected.jobId).closedBy, 'delegated')
+  assert.match(engine.state.jobs.get(selected.jobId).outputRef ?? '', /^$|./)
+})
+
+test('promise_delegate spawns a teammate and links the job', async () => {
+  const { engine, collector } = makeEngine()
+  declareDev(engine, { agent: 'team:dev' })
+  feedTurn(collector, SESSION, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/a.js' } }], assistant: 'started' })
+  const selected = engine.select({ capability: 'code.change', need: 'fix it', riskTier: 1 }, { sessionId: SESSION.id, turn: 1 })
+  const spawned = []
+  const teams = {
+    listMembers: () => [],
+    spawnTeammate: async (_caller, request) => {
+      spawned.push(request)
+      return { member: { id: 'team-session-9', name: request.name, status: 'running' } }
+    },
+    sendMessage: async () => ({}),
+  }
+  engine.services.watchIntervalMs = 60_000
+  const tools = buildTools(engine, collector, () => {}, { getTeams: () => teams, getSubagents: () => null })
+  const delegate = tools.find((tool) => tool.name === 'promise_delegate')
+  const result = await delegate.execute(
+    { jobId: selected.jobId, prompt: 'fix the bug in src/a.js' },
+    { agent: { session: SESSION }, signal: new AbortController().signal },
+  )
+  assert.equal(result.dispatched, true)
+  assert.equal(result.family, 'team')
+  assert.equal(spawned.length, 1)
+  assert.equal(engine.state.jobs.get(selected.jobId).delegation.sessionId, 'team-session-9')
+  assert.deepEqual(validateJsonSchemaValue(delegate.output.schema, result, 'value'), [])
+  for (const timer of engine.watchers.values()) clearInterval(timer)
+  engine.watchers.clear()
+})
+
+
+test('direct spawn_teammate / send_message / subagent calls bind to an open job', () => {
+  const { engine, collector } = makeEngine()
+  declareDev(engine, { agent: 'team:dev', capability: 'code.team' })
+  declareDev(engine, { agent: 'preset:developer', capability: 'code.sub' })
+
+  const teamJob = engine.select({ capability: 'code.team', need: 'team fix' }, { sessionId: SESSION.id, turn: 1 })
+  const bound = engine.bindToolDelegation({
+    toolName: 'spawn_teammate',
+    args: { name: 'dev' },
+    value: { member: { id: 'team-session-2', name: 'dev', status: 'running' } },
+    callerSessionId: SESSION.id,
+    callerAgent: { session: SESSION },
+  })
+  assert.equal(bound, teamJob.jobId)
+  assert.equal(engine.state.jobs.get(teamJob.jobId).delegation.sessionId, 'team-session-2')
+
+  const subJob = engine.select({ capability: 'code.sub', need: 'sub fix' }, { sessionId: SESSION.id, turn: 2 })
+  const subBound = engine.bindToolDelegation({
+    toolName: 'subagent',
+    args: { agent_preset: 'developer' },
+    value: { kind: 'activation', subagentId: 'sub-session-1' },
+    callerSessionId: SESSION.id,
+    callerAgent: { session: SESSION },
+  })
+  assert.equal(subBound, subJob.jobId)
+  assert.equal(engine.state.jobs.get(subJob.jobId).delegation.kind, 'subagent')
+  for (const timer of engine.watchers.values()) clearInterval(timer)
+  engine.watchers.clear()
+})
+
+test('an ambiguous delegation binds nothing', () => {
+  const { engine } = makeEngine()
+  declareDev(engine, { agent: 'team:dev' })
+  declareDev(engine, { capability: 'code.review', agent: 'team:dev', statement: 'review a diff and report findings' })
+  engine.select({ capability: 'code.change', need: 'a' }, { sessionId: SESSION.id, turn: 1 })
+  engine.select({ capability: 'code.review', need: 'b' }, { sessionId: SESSION.id, turn: 1 })
+  const bound = engine.bindToolDelegation({
+    toolName: 'spawn_teammate',
+    args: { name: 'dev' },
+    value: { member: { id: 'team-session-3', name: 'dev', status: 'running' } },
+    callerSessionId: SESSION.id,
+    callerAgent: { session: SESSION },
+  })
+  assert.equal(bound, null)
+})

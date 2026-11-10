@@ -30,6 +30,7 @@ test('registers five tools, one prompt section and the session listener', () => 
     'promise_declare',
     'promise_select',
     'promise_settle',
+    'promise_delegate',
     'promise_inspect',
     'promise_compose',
   ])

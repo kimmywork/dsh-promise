@@ -15,6 +15,7 @@ import { JevClient } from './jev.js'
 import { PromiseEngine } from './engine.js'
 import { buildTools } from './tools.js'
 import { PROTOCOL_TEXT } from './prompt.js'
+import { blocksToText } from './util.js'
 
 export { Config }
 
@@ -84,9 +85,29 @@ export function apply(ctx, config) {
     log('warn', `Jev is enabled but neither jev.apiKey nor ${config.jev.apiKeyEnv} is set; semantic assessment is unavailable and L1 still works`)
   }
 
-  const engine = new PromiseEngine({ config, ledger, collector, jev, logger: log })
+  // Optional services: the plugin still works without Agent Teams or subagents.
+  const services = {
+    getTeams: () => ctx.get('agentTeams'),
+    getSubagents: () => ctx.get('subagents'),
+    readSession: (sessionId) => {
+      try {
+        const session = ctx.sessions.get(sessionId)
+        if (!session) return null
+        const messages = session.deriveMessages()
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const message = messages[index]
+          if (message?.role === 'assistant') return { outputText: blocksToText(message.content, 32_768) }
+        }
+      } catch (error) {
+        log('warn', `reading delegated session failed: ${error?.message ?? error}`)
+      }
+      return null
+    },
+  }
 
-  for (const tool of buildTools(engine, collector, log)) {
+  const engine = new PromiseEngine({ config, ledger, collector, jev, logger: log, services })
+
+  for (const tool of buildTools(engine, collector, log, services)) {
     ctx.tools.register(tool)
   }
 
@@ -109,6 +130,9 @@ export function apply(ctx, config) {
         seenTurns.add(key)
         if (seenTurns.size > 5_000) seenTurns.clear()
         void engine
+          .onSessionTurnEnd(sessionId, turn)
+          .catch((error) => log('warn', `delegated settle failed: ${error?.message ?? error}`))
+        void engine
           .autoSettle(sessionId, turn, { cwd: session?.header?.cwd })
           .catch((error) => log('warn', `auto settle failed: ${error?.message ?? error}`))
         return
@@ -126,6 +150,39 @@ export function apply(ctx, config) {
     } catch (error) {
       log('warn', `session observation failed: ${error?.message ?? error}`)
     }
+  })
+
+  // A subagent run reports its terminal identity independently of session delivery;
+  // settle the linked job from that signal.
+  ctx.on('subagent/end', (info) => {
+    try {
+      const jobId = info?.id === undefined ? undefined : engine.delegationBySession.get(String(info.id))
+      if (jobId) void engine.settleDelegated(jobId).catch((error) => log('warn', `subagent settle failed: ${error?.message ?? error}`))
+    } catch (error) {
+      log('warn', `subagent end handling failed: ${error?.message ?? error}`)
+    }
+  })
+
+  // The model may delegate with its own tools (spawn_teammate/send_message/subagent).
+  // Post-execute carries the canonical result, including the child identity, so an
+  // open job opened by promise_select can be bound to that child without a new tool.
+  ctx.on('tools/post-execute', (exec, result, next) => {
+    try {
+      if (result && result.isError === false) {
+        const sessionId = exec?.agent?.session?.id
+        engine.bindToolDelegation({
+          toolName: exec?.name,
+          args: exec?.arguments ?? {},
+          value: result.value,
+          callerSessionId: sessionId ? String(sessionId) : undefined,
+          callerAgent: exec?.agent,
+          teams: services.getTeams(),
+        })
+      }
+    } catch (error) {
+      log('warn', `delegation binding failed: ${error?.message ?? error}`)
+    }
+    return next()
   })
 
   ctx.on('dispose', () => {

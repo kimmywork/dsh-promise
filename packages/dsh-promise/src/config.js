@@ -51,6 +51,8 @@ export const Config = z.object({
     resample: z.boolean().default(true),
     maxStateBytes: z.number().min(1024).default(24_576),
     truncateToBytes: z.number().min(512).default(16_384),
+    /** How long a delegated job waits for its teammate before the watcher stops. */
+    delegationTimeoutMs: z.number().min(60_000).default(1_800_000),
   }).default({}),
   jev: z.object({
     enabled: z.boolean().default(true),

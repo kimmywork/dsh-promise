@@ -60,11 +60,27 @@ cd packages/dsh-promise
 ```text
 promise_declare  → 承诺什么、怎么证伪
 promise_select   → 选谁做、用什么评估级别（返回 jobId）
-   ...执行（subagent / tool / workflow，DSH 原生）...
-promise_settle   → 结算：检查、评估、改信任、违约处理
+
+  两条委派路径（任选）：
+  A. promise_delegate → 插件替你 spawn/message/subagent，并自动结算
+  B. 直接调 spawn_teammate / send_message / subagent
+     → post-execute 拿到子会话 id，自动把 job 绑上去，子任务结束时结算
+
+promise_settle   → 手动结算（自己干的活，或绑定失败时兜底）
 promise_inspect  → 信任、承诺、违约、账本
 promise_compose  → 把多个子代理封装成一个外部承诺
 ```
+
+### 委派绑定发生在哪一步
+
+| 步骤 | 位置 | 做什么 |
+|---|---|---|
+| 1 | `promise_select` | 建 job、定 level，记下 `job.agent`（team:/preset:/bot:） |
+| 2 | `tools/post-execute` | 拦截 `spawn_teammate` / `send_message` / `subagent`，从**规范结果**里取子会话 id（`member.id` / `subagentId`），只在「同一会话里恰好一个匹配家族的 open job」时绑定，否则不猜 |
+| 3 | 子会话完成 | team：teammate 变 `inactive`（轮询 roster）；subagent：`subagent/end`；随后用子会话的 assistant 文本与工具轨迹结算 |
+| 4 | 结算 | 走同一套 L1/L2/L3、Jev、信任与违约逻辑，`closedBy: "delegated"` |
+
+没有开放 job 时不绑定、不建承诺——**必须先 `promise_select`**。`message_bot` 目前拿不到 bot 的会话 id，所以 bot 仍需手动结算。
 
 一次真实结算的返回（节选）：
 

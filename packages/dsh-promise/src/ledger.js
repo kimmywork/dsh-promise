@@ -164,6 +164,11 @@ export class Ledger {
         }
         break
       }
+      case 'job/linked': {
+        const job = this.state.jobs.get(payload.jobId)
+        if (job && payload.delegation) job.delegation = payload.delegation
+        break
+      }
       case 'job/closed': {
         const job = this.state.jobs.get(payload.jobId)
         if (job) {

@@ -33,7 +33,12 @@ export class PromiseEngine {
     this.collector = options.collector
     this.jev = options.jev
     this.log = options.logger ?? (() => {})
+    this.services = options.services ?? {}
     this.budget = new Map()
+    this.delegations = new Map()
+    this.delegationBySession = new Map()
+    this.watchers = new Map()
+    this.settling = new Set()
   }
 
   get state() {
@@ -196,8 +201,8 @@ export class PromiseEngine {
       return { jobId: job.id, verdict: job.verdict, note: 'job already settled', level: job.level, closedAt: job.closedAt }
     }
 
-    const sessionId = job.sessionId ?? context.sessionId
-    const observation = this.collector.observationFor(sessionId, { turn: job.turn })
+    const sessionId = context.sessionId ?? job.sessionId
+    const observation = context.observation ?? this.collector.observationFor(sessionId, { turn: job.turn })
     const outputText = String(input.output ?? observation.outputText ?? '')
     const latencyMs = Number(input.latencyMs ?? observation.durationMs ?? 0)
     const enrichedObservation = {
@@ -310,7 +315,7 @@ export class PromiseEngine {
       outcome: input.outcome === 'failure' ? 'failure' : 'success',
       latencyMs,
       closedAt: nowIso(),
-      closedBy: context.auto ? 'auto' : 'settle',
+      closedBy: context.closedBy ?? (context.auto ? 'auto' : 'settle'),
       verdict: verdict.verdict,
       assessmentId: assessment.id,
     })
@@ -411,7 +416,7 @@ export class PromiseEngine {
 
   async autoSettle(sessionId, turn, context = {}) {
     const jobs = [...this.state.jobs.values()].filter(
-      (job) => job.sessionId === sessionId && job.turn === turn && !job.closedAt,
+      (job) => job.sessionId === sessionId && job.turn === turn && !job.closedAt && !job.delegation,
     )
     for (const job of jobs) {
       await this.settle({ jobId: job.id, outcome: 'success' }, { ...context, sessionId, auto: true })
@@ -463,6 +468,182 @@ export class PromiseEngine {
       this.#warn(`auto settle failed: ${error?.message ?? error}`)
       return { settled: 0 }
     }
+  }
+
+  /**
+   * Link an open job to a dispatched child (teammate session or subagent
+   * session) so completion can settle it with the child's own output.
+   */
+  linkDelegation(jobId, delegation) {
+    const job = this.state.jobs.get(jobId)
+    if (!job) throw new Error(`unknown jobId: ${jobId}`)
+    if (job.closedAt) throw new Error('job is already settled')
+    const link = {
+      ...delegation,
+      sessionId: String(delegation.sessionId),
+      startedAt: Date.now(),
+      settled: false,
+    }
+    this.delegations.set(jobId, link)
+    this.delegationBySession.set(link.sessionId, jobId)
+    // Runtime-only handles (Agent, TeamService) must never enter the ledger.
+    const persisted = { kind: link.kind, name: link.name, sessionId: link.sessionId, startedAt: link.startedAt }
+    this.ledger.append('job/linked', { jobId, delegation: persisted })
+    this.#watchDelegation(jobId)
+    return link
+  }
+
+  #watchDelegation(jobId) {
+    const link = this.delegations.get(jobId)
+    if (!link || link.kind !== 'team' || !link.teams || !link.leadAgent) return
+    const interval = this.services.watchIntervalMs ?? 1500
+    const deadline = link.startedAt + (this.config.assessment.delegationTimeoutMs ?? 1_800_000)
+    const timer = setInterval(() => {
+      const current = this.delegations.get(jobId)
+      if (!current || current.settled) {
+        clearInterval(timer)
+        this.watchers.delete(jobId)
+        return
+      }
+      if (Date.now() > deadline) {
+        clearInterval(timer)
+        this.watchers.delete(jobId)
+        this.#warn(`delegated job ${jobId} timed out waiting for the teammate`)
+        return
+      }
+      try {
+        const member = current.teams.listMembers(current.leadAgent).find((entry) => String(entry.id) === current.sessionId)
+        if (!member) return
+        if (member.status === 'running' || member.status === 'provisioning') return
+        clearInterval(timer)
+        this.watchers.delete(jobId)
+        if (member.status === 'failed') {
+          void this.settleDelegated(jobId, { error: `teammate ${current.name} failed` }).catch((error) => this.#warn(`delegated settle failed: ${error?.message ?? error}`))
+          return
+        }
+        void this.settleDelegated(jobId).catch((error) => this.#warn(`delegated settle failed: ${error?.message ?? error}`))
+      } catch (error) {
+        this.#warn(`delegation watch failed: ${error?.message ?? error}`)
+      }
+    }, interval)
+    timer.unref?.()
+    this.watchers.set(jobId, timer)
+  }
+
+  /**
+   * Settle a delegated job from the child's own session, once.
+   * @param {string} jobId
+   * @param {{output?: string, error?: string}} [options]
+   */
+  async settleDelegated(jobId, options = {}) {
+    if (this.settling.has(jobId)) return null
+    const job = this.state.jobs.get(jobId)
+    if (!job || job.closedAt) return null
+    const link = this.delegations.get(jobId) ?? job.delegation
+    if (!link) return null
+    this.settling.add(jobId)
+    const timer = this.watchers.get(jobId)
+    if (timer) {
+      clearInterval(timer)
+      this.watchers.delete(jobId)
+    }
+    const current = this.delegations.get(jobId)
+    if (current) current.settled = true
+    const sessionId = String(link.sessionId)
+    const observation = this.collector.observationFor(sessionId)
+    let outputText = options.output ?? observation.outputText ?? ''
+    if (!outputText && this.services.readSession) {
+      try {
+        outputText = this.services.readSession(sessionId)?.outputText ?? ''
+      } catch (error) {
+        this.#warn(`reading delegated session failed: ${error?.message ?? error}`)
+      }
+    }
+    try {
+      return await this.settle(
+        {
+          jobId,
+          outcome: options.error ? 'failure' : 'success',
+          output: outputText,
+          latencyMs: Date.now() - (link.startedAt ?? Date.now()),
+        },
+        { sessionId, observation, cwd: link.cwd, closedBy: 'delegated' },
+      )
+    } catch (error) {
+      this.#warn(`delegated settle failed: ${error?.message ?? error}`)
+      const retry = this.delegations.get(jobId)
+      if (retry) retry.settled = false
+      return null
+    } finally {
+      this.settling.delete(jobId)
+    }
+  }
+
+  /**
+   * Bind an open job to a delegation the model started itself (spawn_teammate,
+   * send_message, subagent). The canonical tool result carries the child
+   * identity, so no result parsing is needed.
+   * @returns the bound job id, or null when nothing unambiguous matched
+   */
+  bindToolDelegation({ toolName, args = {}, value, callerSessionId, callerAgent, teams }) {
+    if (!callerSessionId || value === undefined || value === null) return null
+    const supported = new Set(['spawn_teammate', 'send_message', 'subagent', 'subagent_fork'])
+    if (!supported.has(toolName)) return null
+    const open = [...this.state.jobs.values()].filter(
+      (job) => job.sessionId === callerSessionId && !job.closedAt && !job.delegation,
+    )
+    if (open.length === 0) return null
+
+    let candidates = []
+    let link = null
+    if (toolName === 'spawn_teammate') {
+      const name = typeof args.name === 'string' ? args.name : ''
+      candidates = open.filter((job) => job.agent === `team:${name}`)
+      const member = value?.member
+      if (member?.id) {
+        link = { kind: 'team', name: member.name ?? name, sessionId: String(member.id), leadAgent: callerAgent, teams }
+      }
+    } else if (toolName === 'send_message') {
+      const target = typeof args.target === 'string' ? args.target : ''
+      candidates = open.filter((job) => job.agent === `team:${target}`)
+      if (teams && target && target !== 'lead') {
+        try {
+          const member = teams.listMembers(callerAgent).find((entry) => entry.name === target)
+          if (member) {
+            link = { kind: 'team', name: target, sessionId: String(member.id), leadAgent: callerAgent, teams }
+          }
+        } catch {
+          // Roster unavailable: leave the job unlinked rather than guess.
+        }
+      }
+    } else {
+      const preset = typeof args.agent_preset === 'string' ? args.agent_preset : undefined
+      candidates = open.filter(
+        (job) => job.agent.startsWith('preset:') && (preset === undefined || job.agent === `preset:${preset}`),
+      )
+      const childId = value?.subagentId ?? value?.childId
+      if (childId) link = { kind: 'subagent', name: preset ?? 'subagent', sessionId: String(childId) }
+    }
+    if (candidates.length !== 1 || !link) return null
+    this.linkDelegation(candidates[0].id, link)
+    return candidates[0].id
+  }
+
+  /** Called for every child-session turn end; settles a linked job when the child is done. */
+  onSessionTurnEnd(sessionId, turn) {
+    const jobId = this.delegationBySession.get(String(sessionId))
+    if (!jobId) return Promise.resolve(null)
+    const link = this.delegations.get(jobId)
+    if (!link || link.settled) return Promise.resolve(null)
+    if (link.kind === 'team' && link.teams && link.leadAgent) {
+      try {
+        const member = link.teams.listMembers(link.leadAgent).find((entry) => String(entry.id) === String(sessionId))
+        if (member && (member.status === 'running' || member.status === 'provisioning')) return Promise.resolve(null)
+      } catch {
+        // Fall through: settle on the turn boundary if the roster is unavailable.
+      }
+    }
+    return this.settleDelegated(jobId)
   }
 
   attachFeedback({ sessionId, messageId, rating, note = null }) {
