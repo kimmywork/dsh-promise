@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
+import { buildTools } from '../src/tools.js'
 import { declareDev, feedTurn, makeEngine, makeJev, SESSION } from './helpers.js'
 
 const BAD_OUTPUT = '--- a/src/a.js\n+++ b/src/a.js\n+const secret = "sk-abcdefghijklmnop123"'
@@ -195,4 +197,21 @@ test('inspect renders trust and summary without throwing', () => {
   assert.match(engine.inspect({ what: 'summary' }).text, /promises:/)
   assert.match(engine.inspect({ what: 'promise' }).text, /code.change/)
   assert.match(engine.inspect({ what: 'ledger' }).text, /chain:/)
+})
+
+
+test('settle tool output validates when semantic metadata is present', async () => {
+  const jev = makeJev()
+  const { engine, collector } = makeEngine({ jev, config: { assessment: { sampleRate: 1 } } })
+  declareDev(engine, { assessment: { policy: 'L3' } })
+  feedTurn(collector, SESSION, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/a.js' } }], assistant: 'done' })
+  const selected = engine.select({ capability: 'code.change', need: 'fix it', riskTier: 3 }, { sessionId: SESSION.id, turn: 1 })
+  const tools = buildTools(engine, collector, () => {})
+  const settleTool = tools.find((tool) => tool.name === 'promise_settle')
+  const result = await settleTool.execute(
+    { jobId: selected.jobId, outcome: 'success', output: 'diff' },
+    { agent: { session: SESSION }, signal: new AbortController().signal },
+  )
+  assert.equal(result.verdict, 'fulfilled')
+  assert.deepEqual(validateJsonSchemaValue(settleTool.output.schema, result, 'value'), [])
 })

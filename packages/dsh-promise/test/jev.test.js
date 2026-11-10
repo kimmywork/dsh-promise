@@ -65,3 +65,11 @@ test('an unconfigured client refuses to call', async () => {
   assert.equal(client.configured, false)
   await assert.rejects(() => client.ask({}, { q: { type: 'noul' } }), /no API key/)
 })
+
+test('maps a regional block to a distinct error', async () => {
+  const client = clientWith(async () => jsonResponse({ detail: { error_type: 'region_blocked' } }, 451))
+  await assert.rejects(
+    () => client.ask({}, { q: { type: 'noul' } }),
+    (error) => error instanceof JevError && error.code === 'region-blocked' && error.status === 451,
+  )
+})

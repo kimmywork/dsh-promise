@@ -117,6 +117,9 @@ export class JevClient {
       const errorType = typeof detail === 'object' ? detail?.error_type : undefined
       if (errorType === 'max_tokens_exceeded') throw new JevOversizeError()
       if (response.status === 401) throw new JevError('jev authentication failed', { status: 401, code: 'auth' })
+      if (response.status === 451) {
+        throw new JevError('TypeSafe returned 451: not available in this region; Jev needs a working proxy', { status: 451, code: 'region-blocked' })
+      }
       const message = typeof detail === 'object' ? detail?.message : typeof detail === 'string' ? detail : `http ${response.status}`
       throw new JevError(`jev error: ${message}`, { status: response.status, code: errorType ?? 'http-error' })
     }

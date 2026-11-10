@@ -245,6 +245,8 @@ gate: PASS — semantic evidence may update trust at L2/L3
 
 ## 已知限制
 
+- **Jev 的地区可用性**：TypeSafe 在部分地区直连返回 `451 not available in your region`；DSH 进程的 `fetch` 会继承 `https_proxy` / `NODE_USE_ENV_PROXY`，所以需要一个可用代理。代理不可用时插件会跳过语义层、只跑 L1，并在 `promise_settle` 的 `semantic` 里报告 `code: "network"`/`"region-blocked"`。
+- **不要求多智能体或 Agent Teams**：单 agent、单工具也能声明与结算；只有在有多个候选代理时，`promise_select` 的排序才有实际意义（否则它只负责记账）。
 - Jev 看不到运行时：代码正确性必须由测试/编译器判定，语义层只判「需求贴合 + 过程」。
 - 32k 上下文：超限会截断重试，并压低置信上限；超长 diff 建议分片评估（P1）。
 - 中间带不确定：`p ∈ (0.3, 0.85)` 会双采样；仍然模糊就记 `undetermined`，不硬判。
