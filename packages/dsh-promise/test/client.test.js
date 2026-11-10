@@ -85,7 +85,7 @@ test('apply registers the config row and defers the credit panel to the Remote f
   assert.deepEqual(injections[0].deps, ['remote'])
 })
 
-test('a mounted snapshot Remote registers the header action with the session id', async () => {
+test('a mounted snapshot Remote registers the header action with a loader', async () => {
   const exports = await loadClientModule()
   let contribution
   const { ctx, slots, injections } = fakeContext({
@@ -118,7 +118,10 @@ test('a mounted snapshot Remote registers the header action with the session id'
   const header = slots.find((entry) => entry.name === 'conversation.session.header.actions')
   assert.ok(header, 'header action was not registered')
   const props = header.register().definition.inject('session-42')
-  assert.equal(props.sessionId, 'session-42')
+  // sessionId/t belong to the slot's standard kit; an inject that repeats them
+  // would shadow the kit and (when the value is wrong) silently blank the panel.
+  assert.equal(props.sessionId, undefined)
+  assert.equal(props.t, undefined)
   assert.equal(typeof props.load, 'function')
 })
 

@@ -122,10 +122,10 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
       },
       panel: {
-        position: 'absolute',
-        top: 'calc(100% + 6px)',
-        right: 0,
-        zIndex: 120,
+        position: 'fixed',
+        top: '64px',
+        right: '24px',
+        zIndex: 1200,
         width: '380px',
         maxHeight: '440px',
         overflow: 'auto',
@@ -271,8 +271,13 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = react.useState('idle')
 
       react.useEffect(() => {
-        if (!open || !sessionId) return undefined
+        if (!open) return undefined
         let cancelled = false
+        if (!sessionId) {
+          setSnapshot({ error: 'no session id' })
+          setStatus('error')
+          return undefined
+        }
         setStatus('loading')
         Promise.resolve()
           .then(() => load(sessionId))
@@ -290,8 +295,6 @@ window.__ModuleLoader__.load({
           cancelled = true
         }
       }, [open, sessionId])
-
-      if (!sessionId) return null
 
       const header = snapshot?.header
       const label = header
@@ -339,7 +342,7 @@ window.__ModuleLoader__.load({
           onClick: () => setOpen((value) => !value),
         }, label),
         open
-          ? react.createElement('div', { key: 'panel', style: styles.panel }, [
+          ? react.createElement('div', { key: 'panel', 'data-promise-credits': 'panel', style: styles.panel }, [
             react.createElement('div', { key: 'title', style: styles.panelTitle }, [
               react.createElement('span', { key: 'label' }, t('creditsTitle')),
               react.createElement('button', {
@@ -398,12 +401,9 @@ window.__ModuleLoader__.load({
       id: 'promise-credits',
       order: 55,
       locale: NS,
-      // `scope: session` slots pass the parent session id as the first argument.
-      inject: (sessionId) => ({
-        sessionId: sessionId ? String(sessionId) : undefined,
-        load: (id) => loadSnapshot(ctx, id),
-        t,
-      }),
+      // `sessionId` and `t` come from the slot's standard kit (the slot is
+      // session-scoped and declares `locale: NS`), so only the loader is ours.
+      inject: () => ({ load: (id) => loadSnapshot(ctx, id) }),
     }, PromiseCreditsAction))
 
     function registerCreditsAction(ctx, t) {
