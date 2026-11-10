@@ -121,11 +121,18 @@ window.__ModuleLoader__.load({
         lineHeight: '18px',
         cursor: 'pointer',
       },
+      dialog: {
+        padding: 0,
+        border: 0,
+        background: 'transparent',
+        color: 'inherit',
+        width: 'auto',
+        maxWidth: 'none',
+        maxHeight: 'none',
+        overflow: 'visible',
+      },
       panel: {
-        position: 'fixed',
-        top: '64px',
-        right: '24px',
-        zIndex: 10000,
+        position: 'relative',
         width: '380px',
         maxHeight: '440px',
         overflow: 'auto',
@@ -250,7 +257,11 @@ window.__ModuleLoader__.load({
 
 
     async function loadSnapshot(ctx, sessionId) {
-      const namespace = ctx.remote && ctx.remote.promiseInventory
+      // `ctx.get` resolves the namespace without a service-property read, which
+      // Cordis rejects unless the exact service was injected into this context.
+      const namespace = typeof ctx.get === 'function'
+        ? ctx.get('remote.promiseInventory')
+        : ctx.remote && ctx.remote.promiseInventory
       if (!namespace || typeof namespace.snapshot !== 'function') throw new Error('promiseInventory remote is not published')
       const result = await namespace.snapshot(String(sessionId))
       if (result && result.ok === false) throw new Error(result.error?.message ?? 'promiseInventory.snapshot failed')
@@ -269,11 +280,10 @@ window.__ModuleLoader__.load({
       const [snapshot, setSnapshot] = react.useState(null)
       const [status, setStatus] = react.useState('idle')
       const [loaded, setLoaded] = react.useState(false)
+      const dialogRef = react.useRef(null)
 
-      // Native <details> owns the open state, so a slot remount cannot swallow
-      // the click and no React state update is needed just to show the panel.
-      const onToggle = (event) => {
-        if (!event.currentTarget.open || loaded) return
+      const fetchSnapshot = () => {
+        if (loaded) return
         setLoaded(true)
         if (!sessionId) {
           setSnapshot({ error: 'no session id' })
@@ -291,6 +301,26 @@ window.__ModuleLoader__.load({
             setSnapshot({ error: String(error?.message ?? error) })
             setStatus('error')
           })
+      }
+
+      const openPanel = () => {
+        const dialog = dialogRef.current
+        if (!dialog) return
+        // showModal puts the panel in the browser top layer, so neither the
+        // conversation's overflow nor any ancestor stacking context can hide it.
+        if (typeof dialog.showModal === 'function') {
+          if (!dialog.open) dialog.showModal()
+        } else {
+          dialog.setAttribute('open', '')
+        }
+        fetchSnapshot()
+      }
+
+      const closePanel = () => {
+        const dialog = dialogRef.current
+        if (!dialog) return
+        if (typeof dialog.close === 'function' && dialog.open) dialog.close()
+        else dialog.removeAttribute('open')
       }
 
       const header = snapshot?.header
@@ -328,41 +358,45 @@ window.__ModuleLoader__.load({
             ? react.createElement('p', { style: styles.hint }, t('creditsEmpty'))
             : rows
 
-      return react.createElement('details', {
+      return react.createElement('span', {
         key: 'credits',
-        style: { position: 'relative', display: 'inline-block' },
-        'data-promise-credits': 'root',
-        onToggle,
+        style: { display: 'inline-flex' },
       }, [
-        react.createElement('summary', {
+        react.createElement('button', {
           key: 'trigger',
-          style: { ...styles.trigger, listStyle: 'none' },
+          type: 'button',
+          style: styles.trigger,
           'data-promise-credits': 'trigger',
+          onClick: openPanel,
         }, label),
-        react.createElement('div', {
-          key: 'panel',
-          'data-promise-credits': 'panel',
-          style: styles.panel,
+        react.createElement('dialog', {
+          key: 'dialog',
+          ref: dialogRef,
+          'data-promise-credits': 'dialog',
+          style: styles.dialog,
         }, [
-          react.createElement('div', { key: 'title', style: styles.panelTitle }, [
-            react.createElement('span', { key: 'label' }, t('creditsTitle')),
-            react.createElement('button', {
-              key: 'close',
-              type: 'button',
-              style: { ...styles.button, padding: '2px 8px' },
-              onClick: (event) => {
-                const details = event.currentTarget.closest('details')
-                if (details) details.open = false
-              },
-            }, t('creditsClose')),
+          react.createElement('div', {
+            key: 'panel',
+            'data-promise-credits': 'panel',
+            style: styles.panel,
+          }, [
+            react.createElement('div', { key: 'title', style: styles.panelTitle }, [
+              react.createElement('span', { key: 'label' }, t('creditsTitle')),
+              react.createElement('button', {
+                key: 'close',
+                type: 'button',
+                style: { ...styles.button, padding: '2px 8px' },
+                onClick: closePanel,
+              }, t('creditsClose')),
+            ]),
+            body,
+            recent.length > 0
+              ? react.createElement('div', { key: 'recent' }, [
+                react.createElement('div', { key: 'recentTitle', style: { ...styles.label, marginTop: '8px' } }, t('creditsRecent')),
+                ...recent,
+              ])
+              : react.createElement('p', { key: 'noRecent', style: { ...styles.hint, marginTop: '8px' } }, t('creditsNoRecent')),
           ]),
-          body,
-          recent.length > 0
-            ? react.createElement('div', { key: 'recent' }, [
-              react.createElement('div', { key: 'recentTitle', style: { ...styles.label, marginTop: '8px' } }, t('creditsRecent')),
-              ...recent,
-            ])
-            : react.createElement('p', { key: 'noRecent', style: { ...styles.hint, marginTop: '8px' } }, t('creditsNoRecent')),
         ]),
       ])
     }

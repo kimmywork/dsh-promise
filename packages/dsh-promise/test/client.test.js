@@ -35,7 +35,7 @@ async function loadClientModule() {
   return exports
 }
 
-function fakeContext({ mount } = {}) {
+function fakeContext({ mount, get } = {}) {
   const slots = []
   const injections = []
   const ctx = {
@@ -59,6 +59,7 @@ function fakeContext({ mount } = {}) {
     inject(deps, callback) {
       injections.push({ deps, callback })
     },
+    get,
     remote: {
       $mount: mount ?? (async () => () => {}),
     },
@@ -139,4 +140,31 @@ test('a missing Remote namespace hides the panel instead of throwing', async () 
 
   assert.ok(slots.some((entry) => entry.name === 'plugins.row.config'))
   assert.equal(slots.some((entry) => entry.name === 'conversation.session.header.actions'), false)
+})
+
+test('the loader reads the namespace through ctx.get, not a bare service property', async () => {
+  const exports = await loadClientModule()
+  const snapshot = { header: { promises: 1, credit: 0.7 }, rows: [], recent: [] }
+  const { ctx, slots, injections } = fakeContext({
+    // A bare `ctx.remote.promiseInventory` read throws in Cordis unless that
+    // exact service was injected; ctx.get() is the supported lookup.
+    get: (name) => (name === 'remote.promiseInventory'
+      ? { snapshot: async (sessionId) => ({ ok: true, value: { ...snapshot, sessionId } }) }
+      : undefined),
+  })
+  Object.defineProperty(ctx.remote, 'promiseInventory', {
+    get() {
+      throw new Error('cannot get property "remote.promiseInventory" without inject')
+    },
+  })
+
+  exports.apply(ctx)
+  injections[0].callback(ctx)
+  await flush()
+
+  const header = slots.find((entry) => entry.name === 'conversation.session.header.actions')
+  const props = header.register().definition.inject('session-9')
+  const value = await props.load('session-9')
+  assert.equal(value.sessionId, 'session-9')
+  assert.equal(value.header.promises, 1)
 })
