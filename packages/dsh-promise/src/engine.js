@@ -630,17 +630,13 @@ export class PromiseEngine {
     if (!callerSessionId || value === undefined || value === null) return null
     const supported = new Set(['spawn_teammate', 'send_message', 'subagent', 'subagent_fork'])
     if (!supported.has(toolName)) return null
-    const open = [...this.state.jobs.values()].filter(
-      (job) => job.sessionId === callerSessionId && !job.closedAt && !job.delegation,
-    )
-    if (open.length === 0) return null
 
-    let candidates = []
+    let agentId
     let link = null
     if (toolName === 'spawn_teammate') {
       const member = value?.member
       const name = typeof args.name === 'string' ? args.name : member?.target
-      candidates = open.filter((job) => job.agent === `team:${name}`)
+      agentId = name ? `team:${name}` : undefined
       // The model-facing result deliberately omits the Session id; resolve it
       // from the roster instead of guessing.
       let memberId = member?.id
@@ -651,33 +647,83 @@ export class PromiseEngine {
           // Roster unavailable: leave the job unlinked rather than guess.
         }
       }
-      if (memberId) {
-        link = { kind: 'team', name, sessionId: String(memberId), leadAgent: callerAgent, teams }
-      }
+      if (memberId) link = { kind: 'team', name, sessionId: String(memberId), leadAgent: callerAgent, teams }
     } else if (toolName === 'send_message') {
       const target = typeof args.target === 'string' ? args.target : ''
-      candidates = open.filter((job) => job.agent === `team:${target}`)
-      if (teams && target && target !== 'lead') {
+      agentId = target && target !== 'lead' ? `team:${target}` : undefined
+      if (teams && agentId) {
         try {
           const member = teams.listMembers(callerAgent).find((entry) => entry.name === target)
-          if (member) {
-            link = { kind: 'team', name: target, sessionId: String(member.id), leadAgent: callerAgent, teams }
-          }
+          if (member) link = { kind: 'team', name: target, sessionId: String(member.id), leadAgent: callerAgent, teams }
         } catch {
           // Roster unavailable: leave the job unlinked rather than guess.
         }
       }
     } else {
       const preset = typeof args.agent_preset === 'string' ? args.agent_preset : undefined
-      candidates = open.filter(
-        (job) => job.agent.startsWith('preset:') && (preset === undefined || job.agent === `preset:${preset}`),
-      )
+      agentId = preset ? `preset:${preset}` : undefined
       const childId = value?.subagentId ?? value?.childId
       if (childId) link = { kind: 'subagent', name: preset ?? 'subagent', sessionId: String(childId) }
     }
-    if (candidates.length !== 1 || !link) return null
+    if (!agentId || !link) return null
+
+    let candidates = [...this.state.jobs.values()].filter(
+      (job) => job.sessionId === callerSessionId && job.agent === agentId && !job.closedAt && !job.delegation,
+    )
+    if (candidates.length === 0) {
+      // Implicit select: the model already named the agent, so opening the job
+      // against that agent's single active promise is mechanical, not a choice.
+      const promises = [...this.state.promises.values()].filter(
+        (promise) => promise.agent === agentId && promise.status === 'active',
+      )
+      if (promises.length === 1) {
+        const promise = promises[0]
+        const request = String(args.prompt ?? args.message ?? '').trim() || promise.statement
+        candidates = [this.#openImplicitJob({
+          promise,
+          request,
+          sessionId: callerSessionId,
+          turn: this.collector.lastTurn(callerSessionId),
+        })]
+      }
+    }
+    if (candidates.length !== 1) return null
     this.linkDelegation(candidates[0].id, link)
     return candidates[0].id
+  }
+
+  #openImplicitJob({ promise, request, sessionId, turn }) {
+    const view = this.trustFor(promise.agent, promise.capability)
+    const planned = planLevel({
+      riskTier: null,
+      reversible: true,
+      value: 'low',
+      mass: view.mass,
+      declaredPolicy: promise.assessment?.policy,
+      budgetExhausted: this.#budgetExhausted(sessionId, turn),
+      defaultLevel: this.config.assessment.defaultLevel,
+    }, { coldStartMass: this.config.trust.coldStartMass, defaultLevel: this.config.assessment.defaultLevel })
+    const job = {
+      id: newId('job'),
+      promiseId: promise.id,
+      agent: promise.agent,
+      capability: promise.capability,
+      request: truncateMiddle(request, 8_192),
+      constraints: {},
+      riskTier: null,
+      reversible: true,
+      value: 'low',
+      level: planned.level,
+      levelReasons: ['implicit select on delegation', ...planned.reasons],
+      sessionId,
+      turn,
+      attribution: 'implicit',
+      outcome: null,
+      openedAt: nowIso(),
+      closedAt: null,
+    }
+    this.ledger.append('job/opened', { job })
+    return job
   }
 
   /** Called for every child-session turn end; settles a linked job when the child is done. */

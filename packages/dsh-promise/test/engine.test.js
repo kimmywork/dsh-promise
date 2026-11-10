@@ -502,3 +502,55 @@ test('an explicit acceptance is recorded and the job settles', async () => {
   assert.equal(engine.state.counters.accepted, 1)
   assert.ok(engine.trustFor('team:accepter', 'code.accept').count >= 1)
 })
+
+
+test('spawn_teammate opens the job implicitly when the agent has one active promise', async () => {
+  const { engine, collector } = makeEngine()
+  engine.declare({
+    agent: 'team:solo',
+    capability: 'code.solo',
+    statement: 'do the delegated task and report the result',
+    rules: [{ id: 'min', kind: 'min-bytes', min: 1 }],
+  })
+  const teams = {
+    listMembers: () => [{ id: 'solo-session', name: 'solo', status: 'running' }],
+    sendMessage: async () => ({}),
+    spawnTeammate: async () => ({}),
+  }
+  const bound = engine.bindToolDelegation({
+    toolName: 'spawn_teammate',
+    args: { name: 'solo', prompt: 'do the thing' },
+    value: { member: { target: 'solo', role: 'teammate', status: 'running' } },
+    callerSessionId: SESSION.id,
+    callerAgent: { session: SESSION },
+    teams,
+  })
+  assert.ok(bound)
+  const job = engine.state.jobs.get(bound)
+  assert.equal(job.attribution, 'implicit')
+  assert.equal(job.request, 'do the thing')
+  assert.equal(job.delegation.sessionId, 'solo-session')
+
+  feedTurn(collector, { id: 'solo-session', header: { cwd: process.cwd() } }, { assistant: 'done' })
+  const result = await engine.settleDelegated(bound)
+  assert.equal(result.verdict, 'fulfilled')
+  for (const timer of engine.watchers.values()) clearInterval(timer)
+  engine.watchers.clear()
+})
+
+test('spawn_teammate stays unbound when the agent has several promises', () => {
+  const { engine } = makeEngine()
+  engine.declare({ agent: 'team:multi', capability: 'code.one', statement: 'first capability of this agent' })
+  engine.declare({ agent: 'team:multi', capability: 'code.two', statement: 'second capability of this agent' })
+  const teams = { listMembers: () => [{ id: 'multi-session', name: 'multi', status: 'running' }], spawnTeammate: async () => ({}) }
+  const bound = engine.bindToolDelegation({
+    toolName: 'spawn_teammate',
+    args: { name: 'multi', prompt: 'do it' },
+    value: { member: { target: 'multi', status: 'running' } },
+    callerSessionId: SESSION.id,
+    callerAgent: { session: SESSION },
+    teams,
+  })
+  assert.equal(bound, null)
+  assert.equal(engine.state.jobs.size, 0)
+})

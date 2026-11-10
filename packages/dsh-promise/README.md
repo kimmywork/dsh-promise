@@ -61,10 +61,11 @@ cd packages/dsh-promise
 promise_declare  → 承诺什么、怎么证伪
 promise_select   → 选谁做、用什么评估级别（返回 jobId）
 
-  两条委派路径（任选）：
-  A. promise_delegate → 插件替你 spawn/message/subagent，并自动结算
-  B. 直接调 spawn_teammate / send_message / subagent
-     → post-execute 拿到子会话 id，自动把 job 绑上去，子任务结束时结算
+  三条路径（任选）：
+  A. 直接 spawn_teammate / send_message 一个「只有一条 active 承诺」的 agent
+     → 隐式 select：自动开 job、绑定、子任务结束时结算（无需先 select）
+  B. 多个候选时先 promise_select 选人，再按 A 委派
+  C. 需要把承诺契约注入 prompt 时用 promise_delegate（它也会自动结算）
 
 promise_settle   → 手动结算（自己干的活，或绑定失败时兜底）
 promise_inspect  → 信任、承诺、违约、账本
@@ -75,12 +76,12 @@ promise_compose  → 把多个子代理封装成一个外部承诺
 
 | 步骤 | 位置 | 做什么 |
 |---|---|---|
-| 1 | `promise_select` | 建 job、定 level，记下 `job.agent`（team:/preset:/bot:） |
+| 1 | `promise_select` 或隐式 select | 建 job、定 level。隐式 select 发生在按名字委派、且该 agent 恰好只有一条 active 承诺时；同一 agent 有多条承诺则必须显式 select |
 | 2 | `tools/post-execute` | 拦截 `spawn_teammate` / `send_message` / `subagent`，从**规范结果**里取子会话 id（`member.id` / `subagentId`），只在「同一会话里恰好一个匹配家族的 open job」时绑定，否则不猜 |
 | 3 | 子会话完成 | team：teammate 变 `inactive`（轮询 roster）；subagent：`subagent/end`；随后用子会话的 assistant 文本与工具轨迹结算 |
 | 4 | 结算 | 走同一套 L1/L2/L3、Jev、信任与违约逻辑，`closedBy: "delegated"` |
 
-没有开放 job 时不绑定、不建承诺——**必须先 `promise_select`**。`message_bot` 目前拿不到 bot 的会话 id，所以 bot 仍需手动结算。
+没有承诺的 agent 不建 job、不碰信任；同一 agent 有多条 active 承诺且没有显式 select 时也不猜。`message_bot` 目前拿不到 bot 的会话 id，所以 bot 仍需手动结算。
 
 > 注意：`spawn_teammate` 的模型侧结果故意**不含 session id**（只有 `target`），所以绑定要用 `agentTeams.listMembers()` 按名字反查。这是实测踩到的坑。
 
