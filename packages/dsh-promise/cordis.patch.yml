@@ -1,0 +1,13 @@
+# dsh-promise bundle patch.
+#
+# One insert over the profile root. The row id `promise` is stable so the
+# profile patch layer can override config by targeting it.
+- insert:
+    - id: promise
+      name: dsh-promise
+      config:
+        enabled: true
+        jev:
+          enabled: true
+          apiKeyEnv: TYPESAFE_API_KEY
+          model: jev-1.14.0

@@ -36,12 +36,20 @@ dsh-promise — profile "$PROFILE_NAME"
   package : $PKG_DIR
   profile : $PROFILE_DIR
 
-1. Install the package into the profile (run this yourself):
+1. Install the package into the profile (run this yourself).
+   dsh-promise is a bundle (package.json -> dsh.bundle), so after this it shows
+   up in the sidebar 插件 page as an installed bundle you can toggle:
 
      cd "$PROFILE_DIR"
-     pnpm add "file:$PKG_DIR"
+     pnpm add --force "file:$PKG_DIR"
 
-2. Add this row to $PROFILE_DIR/cordis.patch.yml (top-level list):
+   Restart DSH, open 插件 -> 已安装插件 -> dsh-promise, then turn it on.
+   (Without restart, the plugin manager may not see the new bundle manifest.)
+
+2. Manual alternative (skip the 插件 page and enable by YAML):
+
+   Add "dsh-promise" to dsh.profile.bundles in $PROFILE_DIR/package.json,
+   or paste this row into $PROFILE_DIR/cordis.patch.yml (top-level list):
 
   - id: promise
     name: dsh-promise
@@ -72,7 +80,7 @@ if [[ "$APPLY" == "1" ]]; then
     exit 1
   fi
   echo
-  echo "==> pnpm add file:$PKG_DIR (in $PROFILE_DIR)"
-  (cd "$PROFILE_DIR" && pnpm add "file:$PKG_DIR")
-  echo "==> installed. Paste the cordis.patch.yml row above, then restart DSH."
+  echo "==> pnpm add --force file:$PKG_DIR (in $PROFILE_DIR)"
+  (cd "$PROFILE_DIR" && pnpm add --force "file:$PKG_DIR")
+  echo "==> installed. Restart DSH, then enable it in the sidebar 插件 page (or use the YAML fallback above)."
 fi

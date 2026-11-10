@@ -12,6 +12,7 @@
     "src",
     "tools",
     "examples",
+    "cordis.patch.yml",
     "README.md",
     "install.sh"
   ],
@@ -37,6 +38,11 @@
     },
     "@deepseek-ai/schemastery": {
       "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   }
 }

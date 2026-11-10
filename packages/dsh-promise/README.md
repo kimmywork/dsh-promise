@@ -20,15 +20,19 @@
 
 ---
 
-## 安装（不改你的 profile）
+## 安装
+
+这个包是 **bundle**（`package.json` 里的 `dsh.bundle` 指向自带的 `cordis.patch.yml`），所以它可以在 DSH 侧栏的**插件**页里被看到和启停。
 
 ```bash
 cd packages/dsh-promise
-./install.sh                     # 打印步骤与 patch 行
-./install.sh --apply --profile web   # 只执行 pnpm add，仍不改 patch 文件
+./install.sh --apply --profile desktop   # 只执行 pnpm add --force，不改任何 YAML
 ```
 
-然后把这一行加进 profile 的 `cordis.patch.yml`：
+然后重启 DSH，打开侧栏 **插件 → 已安装插件 → dsh-promise**，用它自己的开关启用。
+（刚装完没出现时先点一次「刷新」；副本是安装时的快照，源码改动后要重新 `pnpm add --force`。）
+
+不想用 UI 就在 profile 的 `package.json` 里把 `dsh-promise` 加进 `dsh.profile.bundles`，或把这一行加进 `cordis.patch.yml`：
 
 ```yaml
 - id: promise
