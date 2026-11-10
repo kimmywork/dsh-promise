@@ -574,6 +574,32 @@ export class PromiseEngine {
         this.#warn(`reading delegated session failed: ${error?.message ?? error}`)
       }
     }
+    // Accepting the task binds the child to the promise; an explicit decline is
+    // recorded without a trust penalty, and silence counts as implicit acceptance.
+    if (/PROMISE\s+DECLINED/i.test(outputText)) {
+      this.ledger.append('promise/declined', {
+        jobId,
+        promiseId: job.promiseId,
+        agent: job.agent,
+        capability: job.capability,
+        reason: outputText.slice(0, 240),
+      })
+      this.ledger.append('job/closed', {
+        jobId,
+        outcome: 'declined',
+        closedAt: nowIso(),
+        closedBy: 'delegated',
+        verdict: 'undetermined',
+      })
+      return { jobId, verdict: 'undetermined', note: 'the delegated agent declined the promise', level: job.level }
+    }
+    this.ledger.append('promise/accepted', {
+      jobId,
+      promiseId: job.promiseId,
+      agent: job.agent,
+      capability: job.capability,
+      mode: /PROMISE\s+ACCEPTED/i.test(outputText) ? 'explicit' : 'implicit',
+    })
     try {
       return await this.settle(
         {
@@ -612,11 +638,21 @@ export class PromiseEngine {
     let candidates = []
     let link = null
     if (toolName === 'spawn_teammate') {
-      const name = typeof args.name === 'string' ? args.name : ''
-      candidates = open.filter((job) => job.agent === `team:${name}`)
       const member = value?.member
-      if (member?.id) {
-        link = { kind: 'team', name: member.name ?? name, sessionId: String(member.id), leadAgent: callerAgent, teams }
+      const name = typeof args.name === 'string' ? args.name : member?.target
+      candidates = open.filter((job) => job.agent === `team:${name}`)
+      // The model-facing result deliberately omits the Session id; resolve it
+      // from the roster instead of guessing.
+      let memberId = member?.id
+      if (!memberId && teams && name) {
+        try {
+          memberId = teams.listMembers(callerAgent).find((entry) => entry.name === name)?.id
+        } catch {
+          // Roster unavailable: leave the job unlinked rather than guess.
+        }
+      }
+      if (memberId) {
+        link = { kind: 'team', name, sessionId: String(memberId), leadAgent: callerAgent, teams }
       }
     } else if (toolName === 'send_message') {
       const target = typeof args.target === 'string' ? args.target : ''
@@ -778,7 +814,7 @@ export class PromiseEngine {
       `promises: ${promises.length} (active ${promises.filter((p) => p.status === 'active').length}, probation ${promises.filter((p) => p.status === 'probation').length}, suspended ${promises.filter((p) => p.status === 'suspended').length})`,
       `jobs: ${jobs.length} (open ${jobs.filter((job) => !job.closedAt).length})`,
       `assessments: ${assessments.length} · fulfilled ${byVerdict.fulfilled} · violated ${byVerdict.violated} · undetermined ${byVerdict.undetermined}`,
-      `breaches: ${this.state.breaches.length} · unattributed observations: ${this.state.counters.observations}`,
+      `breaches: ${this.state.breaches.length} · accepted: ${this.state.counters.accepted} · declined: ${this.state.counters.declined} · unattributed observations: ${this.state.counters.observations}`,
       `ledger: seq ${this.ledger.lastSeq}, read-only ${this.ledger.readonly}`,
     ]
     return lines.join('\n')

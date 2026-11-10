@@ -15,7 +15,7 @@
 ## 状态
 
 - P0，Node ≥ 20.11，纯 ESM，无构建步骤。
-- 97 个离线单元测试（`npm test`），不触网。
+- 100 个离线单元测试（`npm test`），不触网。
 - `tools/calibrate.js` 用于在真实数据上校准评估器；**未校准前不要让语义证据单独决定信任**（见下文）。
 
 ---
@@ -81,6 +81,34 @@ promise_compose  → 把多个子代理封装成一个外部承诺
 | 4 | 结算 | 走同一套 L1/L2/L3、Jev、信任与违约逻辑，`closedBy: "delegated"` |
 
 没有开放 job 时不绑定、不建承诺——**必须先 `promise_select`**。`message_bot` 目前拿不到 bot 的会话 id，所以 bot 仍需手动结算。
+
+> 注意：`spawn_teammate` 的模型侧结果故意**不含 session id**（只有 `target`），所以绑定要用 `agentTeams.listMembers()` 按名字反查。这是实测踩到的坑。
+
+### 承诺由执行者接受
+
+`promise_delegate` 会把这段放在 prompt 最前面：
+
+```text
+PROMISE CONTRACT
+capability: ...
+statement: ...
+requirements:
+- ...
+qos: {...}
+assessment: L3
+If you accept these terms, begin your reply with "PROMISE ACCEPTED" and then do the work.
+If you cannot accept them, reply "PROMISE DECLINED: <reason>" and stop.
+```
+
+直接 `spawn_teammate` / `send_message` 时，插件无法改写你已经发出的 prompt，所以协议要求 Lead 自己把这段带上；子会话结束时插件会识别：
+
+| 子会话输出 | 记录 | 后果 |
+|---|---|---|
+| `PROMISE ACCEPTED` | `promise/accepted`（explicit） | 正常结算 |
+| 没有标记 | `promise/accepted`（implicit，接受任务即许诺） | 正常结算 |
+| `PROMISE DECLINED: ...` | `promise/declined` | job 以 `declined` 关闭，**不改信任** |
+
+`promise_inspect({what:"summary"})` 会显示 `accepted / declined` 计数。
 
 一次真实结算的返回（节选）：
 
@@ -306,7 +334,7 @@ src/
   collector.js   会话事件采集
   tools.js       五个模型侧工具
   prompt.js      静态协议段（无承诺时为空）
-test/            97 个离线测试
+test/            100 个离线测试
 tools/           calibrate.js
 examples/        示例承诺
 ```
@@ -316,5 +344,5 @@ examples/        示例承诺
 ## 测试
 
 ```bash
-npm test          # 97 tests, 无网络
+npm test          # 100 tests, 无网络
 ```

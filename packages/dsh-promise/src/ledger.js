@@ -26,7 +26,7 @@ function emptyState() {
     trust: new Map(),
     compositions: new Map(),
     breaches: [],
-    counters: { jobs: 0, assessments: 0, observations: 0 },
+    counters: { jobs: 0, assessments: 0, observations: 0, accepted: 0, declined: 0 },
   }
 }
 
@@ -211,6 +211,14 @@ export class Ledger {
       }
       case 'observation/unattributed': {
         this.state.counters.observations += 1
+        break
+      }
+      case 'promise/accepted': {
+        this.state.counters.accepted += 1
+        break
+      }
+      case 'promise/declined': {
+        this.state.counters.declined += 1
         break
       }
       default:

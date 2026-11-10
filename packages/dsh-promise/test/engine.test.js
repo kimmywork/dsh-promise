@@ -294,6 +294,8 @@ test('promise_delegate spawns a teammate and links the job', async () => {
   assert.equal(result.dispatched, true)
   assert.equal(result.family, 'team')
   assert.equal(spawned.length, 1)
+  assert.match(spawned[0].prompt[0].text, /PROMISE CONTRACT/)
+  assert.match(spawned[0].prompt[0].text, /PROMISE ACCEPTED/)
   assert.equal(engine.state.jobs.get(selected.jobId).delegation.sessionId, 'team-session-9')
   assert.deepEqual(validateJsonSchemaValue(delegate.output.schema, result, 'value'), [])
   for (const timer of engine.watchers.values()) clearInterval(timer)
@@ -451,4 +453,52 @@ test('a timed-out host check is skipped, not treated as a violation', async () =
   const result = await engine.settle({ jobId: selected.jobId, outcome: 'success', output: 'diff' }, { sessionId: SESSION.id, turn: 1 })
   assert.equal(result.rules.find((rule) => rule.id === 'slow').skipped, true)
   assert.equal(result.verdict, 'undetermined')
+})
+
+
+test('spawn binding resolves the teammate session id from the roster', () => {
+  const { engine } = makeEngine()
+  declareDev(engine, { agent: 'team:dev2', capability: 'code.team2' })
+  const selected = engine.select({ capability: 'code.team2', need: 'do it' }, { sessionId: SESSION.id, turn: 1 })
+  const teams = { listMembers: () => [{ id: 'team-77', name: 'dev2', status: 'running' }], sendMessage: async () => ({}), spawnTeammate: async () => ({}) }
+  const bound = engine.bindToolDelegation({
+    toolName: 'spawn_teammate',
+    args: { name: 'dev2' },
+    value: { member: { target: 'dev2', role: 'teammate', status: 'running' } },
+    callerSessionId: SESSION.id,
+    callerAgent: { session: SESSION },
+    teams,
+  })
+  assert.equal(bound, selected.jobId)
+  assert.equal(engine.state.jobs.get(selected.jobId).delegation.sessionId, 'team-77')
+  for (const timer of engine.watchers.values()) clearInterval(timer)
+  engine.watchers.clear()
+})
+
+test('an explicit decline closes the job without trust evidence', async () => {
+  const { engine, collector } = makeEngine()
+  declareDev(engine, { agent: 'team:decliner', capability: 'code.decline' })
+  const selected = engine.select({ capability: 'code.decline', need: 'do it' }, { sessionId: SESSION.id, turn: 1 })
+  engine.linkDelegation(selected.jobId, { kind: 'team', name: 'decliner', sessionId: 'decl-session' })
+  feedTurn(collector, { id: 'decl-session', header: { cwd: process.cwd() } }, { assistant: 'PROMISE DECLINED: outside my scope' })
+  const result = await engine.settleDelegated(selected.jobId)
+  assert.equal(result.verdict, 'undetermined')
+  assert.equal(engine.state.counters.declined, 1)
+  assert.equal(engine.trustFor('team:decliner', 'code.decline').count, 0)
+  assert.equal(engine.state.jobs.get(selected.jobId).closedBy, 'delegated')
+})
+
+test('an explicit acceptance is recorded and the job settles', async () => {
+  const { engine, collector } = makeEngine()
+  declareDev(engine, { agent: 'team:accepter', capability: 'code.accept' })
+  const selected = engine.select({ capability: 'code.accept', need: 'do it' }, { sessionId: SESSION.id, turn: 1 })
+  engine.linkDelegation(selected.jobId, { kind: 'team', name: 'accepter', sessionId: 'accept-session' })
+  feedTurn(collector, { id: 'accept-session', header: { cwd: process.cwd() } }, {
+    tools: [{ name: 'edit', args: { path: 'src/a.js' } }],
+    assistant: 'PROMISE ACCEPTED\ndone: changed src/a.js',
+  })
+  const result = await engine.settleDelegated(selected.jobId)
+  assert.equal(result.verdict, 'fulfilled')
+  assert.equal(engine.state.counters.accepted, 1)
+  assert.ok(engine.trustFor('team:accepter', 'code.accept').count >= 1)
 })

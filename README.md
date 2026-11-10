@@ -10,7 +10,7 @@
 
 ```bash
 cd packages/dsh-promise
-npm test                       # 97 个离线测试
+npm test                       # 100 个离线测试
 ./install.sh                   # 打印安装步骤与 cordis.patch.yml 行
 ```
 

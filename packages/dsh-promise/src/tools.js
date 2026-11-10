@@ -25,6 +25,21 @@ function clean(value) {
   return value
 }
 
+function promiseContract(promise, job) {
+  const requirements = (promise.requirements ?? []).map((requirement) => `- ${requirement.id}: ${requirement.text}`).join('\n') || '- (none declared)'
+  return [
+    'PROMISE CONTRACT',
+    `capability: ${promise.capability}`,
+    `statement: ${promise.statement}`,
+    'requirements:',
+    requirements,
+    `qos: ${JSON.stringify(promise.qos ?? {})}`,
+    `assessment: L${job.level}`,
+    'If you accept these terms, begin your reply with "PROMISE ACCEPTED" and then do the work.',
+    'If you cannot accept them, reply "PROMISE DECLINED: <reason>" and stop.',
+  ].join('\n')
+}
+
 const OBJECT = (properties, required = true) => ({ type: 'object', additionalProperties: false, properties })
 
 const stringArray = (description, itemDescription = '') => ({
@@ -530,7 +545,7 @@ export function buildTools(engine, collector, log, deps = {}) {
       const promise = [...engine.state.promises.values()].find((candidate) => candidate.id === job.promiseId)
       if (!promise) throw new Error('the job promise no longer exists')
       const hint = invokeHint(job.agent)
-      const content = [{ type: 'text', text: args.prompt }]
+      const content = [{ type: 'text', text: `${promiseContract(promise, job)}\n\nTASK\n${args.prompt}` }]
 
       if (hint.kind === 'team') {
         const teams = deps.getTeams?.()
