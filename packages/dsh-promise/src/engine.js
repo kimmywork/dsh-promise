@@ -64,11 +64,19 @@ export class PromiseEngine {
 
   #policyFor(job, promise) {
     if (job.policy) return job.policy
+    const existing = [...this.state.assessments.values()].find((assessment) => assessment.jobId === job.id && assessment.policy)
+    if (existing) {
+      job.policy = existing.policy
+      return job.policy
+    }
     const childSessionId = job.delegation?.sessionId ?? job.sessionId
     const hash = contractHash(promise)
     job.policy = typeof this.collector.policyOf === 'function'
       ? this.collector.policyOf(childSessionId, { contractHash: hash })
       : buildPolicy({ contractHash: hash })
+    // Persist immediately: a restart between settle and enrich must not derive a
+    // second, sparse policy id from the contract hash alone.
+    this.ledger.append('job/policy', { jobId: job.id, policy: job.policy })
     return job.policy
   }
 
@@ -295,6 +303,7 @@ export class PromiseEngine {
 
     const policy = this.#policyFor(job, promise)
     const viewBefore = this.trustFor(promise.agent, promise.capability, policy.id)
+    const breachBaseline = viewBefore.count > 0 ? viewBefore : this.trustFor(promise.agent, promise.capability)
     const attributionWeight = job.attribution === 'signal' ? this.config.attribution.signalWeight : 1
     const assessor = semantic ? 'judge:jev' : 'system:checks'
     const evidence = []
@@ -333,7 +342,7 @@ export class PromiseEngine {
     this.ledger.append('assessment/recorded', { assessment, evidence })
 
     let breach = null
-    if (verdict.verdict === 'violated') breach = this.#applyBreach(promise, job, assessment, viewBefore)
+    if (verdict.verdict === 'violated') breach = this.#applyBreach(promise, job, assessment, breachBaseline)
     const recovery = this.#recover(promise, verdict.verdict)
 
     this.ledger.append('job/closed', {
@@ -441,8 +450,9 @@ export class PromiseEngine {
         at: Date.now(),
       }]
       const viewBefore = this.trustFor(promise.agent, promise.capability, policy.id)
+      const breachBaseline = viewBefore.count > 0 ? viewBefore : this.trustFor(promise.agent, promise.capability)
       this.ledger.append('assessment/recorded', { assessment, evidence })
-      const breach = verdict.verdict === 'violated' ? this.#applyBreach(promise, job, assessment, viewBefore) : null
+      const breach = verdict.verdict === 'violated' ? this.#applyBreach(promise, job, assessment, breachBaseline) : null
       return { jobId: job.id, verdict: verdict.verdict, layers, confidence: verdict.confidence, rationale: verdict.rationale, breach, note: 'semantic enrichment of an auto-settled job' }
     } catch (error) {
       this.#warn(`semantic enrichment failed: ${error?.message ?? error}`)
@@ -791,13 +801,15 @@ export class PromiseEngine {
     )
     if (already) return null
     const positive = rating === 'positive'
+    const knownPolicy = job.policy ?? [...this.state.assessments.values()].find((entry) => entry.jobId === job.id && entry.policy)?.policy
+    if (knownPolicy && !job.policy) job.policy = knownPolicy
     const assessment = {
       id: newId('assess'),
       jobId: job.id,
       promiseId: job.promiseId,
       agent: job.agent,
       capability: job.capability,
-      ...(job.policy ? { policy: job.policy } : {}),
+      ...(knownPolicy ? { policy: knownPolicy } : {}),
       assessor: 'user:feedback',
       method: 'user',
       level: 1,
@@ -817,7 +829,7 @@ export class PromiseEngine {
       evidence: [{
         agent: job.agent,
         capability: job.capability,
-        policyId: job.policy?.id ?? 'legacy',
+        policyId: knownPolicy?.id ?? 'legacy',
         assessor: 'user:feedback',
         score: positive ? 1 : 0.2,
         weight: 1,

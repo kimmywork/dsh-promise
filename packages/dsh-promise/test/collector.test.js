@@ -64,3 +64,23 @@ test('captures policy from the child session without hashing the task prompt', (
   assert.equal(policy.contractHash, 'contract-1')
   assert.match(policy.id, /^p_/)
 })
+
+test('a descriptor observed on the parent does not stamp the child route', () => {
+  const collector = new SessionCollector()
+  const parent = { id: 'parent-policy', header: {} }
+  collector.observe(parent, { type: 'subagent/descriptor', data: { agentProvider: 'deepseek-account', agentModel: 'deepseek-flash' } })
+  const policy = collector.policyOf('parent-policy')
+  assert.equal(policy.provider, null)
+  assert.equal(policy.model, null)
+})
+
+test('a replaced system prompt produces a new policy hash', () => {
+  const collector = new SessionCollector()
+  const session = { id: 'prompt-child', header: { origin: 'subagent' } }
+  collector.observe(session, { type: 'system/message', data: { message: { content: [{ type: 'text', text: 'You are a reviewer.' }] } } })
+  const first = collector.policyOf('prompt-child')
+  collector.observe(session, { type: 'system/message', data: { message: { content: [{ type: 'text', text: 'You are a reviewer.\n\n## Promise protocol' }] } } })
+  const second = collector.policyOf('prompt-child')
+  assert.notEqual(first.systemPromptHash, second.systemPromptHash)
+  assert.notEqual(first.id, second.id)
+})

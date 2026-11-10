@@ -15,7 +15,7 @@
 ## 状态
 
 - P0，Node ≥ 20.11，纯 ESM，无构建步骤。
-- 120 个离线单元测试（`npm test`），不触网。
+- 123 个离线单元测试（`npm test`），不触网。
 - `tools/calibrate.js` 用于在真实数据上校准评估器；**未校准前不要让语义证据单独决定信任**（见下文）。
 
 ### 0.1.1 修复的启动故障
@@ -221,6 +221,7 @@ policy = model + provider + agent preset + system prompt hash + tools hash + pro
 - 子会话的 `agentPreset`、`subagent/descriptor`（agentProvider/agentModel/effort）、`request/header`（tools）、`system/message`（系统提示词）由 collector 自动采集。
 - 同一个 `team:code-reviewer` 换模型或换系统提示词 = 新 `policyId`，不会继承旧证据。
 - 旧账本没有 policy 字段的记录标为 `legacy`，不会静默并到新 policy。
+- policy 在首次评估时写入 `job/policy` 事件并随账本重放，重启后 settle/enrich/feedback 仍落在同一个 policy id 下。
 
 `promise_inspect({what:"trust"})` 的每条 row 里会带 `policies` 明细；路由默认仍用 family 聚合（`trustFor` 不传 policyId），策略级路由需要调用方指定 policy。
 
@@ -361,7 +362,7 @@ src/
   collector.js   会话事件采集
   tools.js       五个模型侧工具
   prompt.js      静态协议段（无承诺时为空）
-test/            120 个离线测试
+test/            123 个离线测试
 tools/           calibrate.js
 examples/        示例承诺
 ```

@@ -164,6 +164,11 @@ export class Ledger {
         }
         break
       }
+      case 'job/policy': {
+        const job = this.state.jobs.get(payload.jobId)
+        if (job && payload.policy) job.policy = payload.policy
+        break
+      }
       case 'job/linked': {
         const job = this.state.jobs.get(payload.jobId)
         if (job && payload.delegation) job.delegation = payload.delegation

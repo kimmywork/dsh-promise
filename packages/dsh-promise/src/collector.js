@@ -82,9 +82,14 @@ export class SessionCollector {
 
     switch (event.type) {
       case 'subagent/descriptor': {
-        if (typeof data.agentProvider === 'string') state.policy.provider = data.agentProvider
-        if (typeof data.agentModel === 'string') state.policy.model = data.agentModel
-        if (typeof data.agentReasoningEffort === 'string') state.policy.reasoningEffort = data.agentReasoningEffort
+        // This descriptor describes a spawned child. Apply it only when the
+        // observed session is that child, never to the spawning parent's policy.
+        const isChild = session?.header?.origin === 'subagent' || session?.header?.parentSession !== undefined
+        if (isChild) {
+          if (typeof data.agentProvider === 'string') state.policy.provider = data.agentProvider
+          if (typeof data.agentModel === 'string') state.policy.model = data.agentModel
+          if (typeof data.agentReasoningEffort === 'string') state.policy.reasoningEffort = data.agentReasoningEffort
+        }
         break
       }
       case 'request/header': {
@@ -102,10 +107,10 @@ export class SessionCollector {
         break
       }
       case 'system/message': {
-        if (!state.policy.systemPromptHash) {
-          const text = blocksToText(data.message?.content, 1_000_000)
-          if (text.length > 0) state.policy.systemPromptHash = sha256(text).slice(0, 12)
-        }
+        // The system prompt is replaceable (a promise declaration adds the
+        // protocol section), so hash the latest effective prompt, not the first.
+        const text = blocksToText(data.message?.content, 1_000_000)
+        if (text.length > 0) state.policy.systemPromptHash = sha256(text).slice(0, 12)
         break
       }
       case 'turn/start': {

@@ -538,6 +538,19 @@ test('spawn_teammate opens the job implicitly when the agent has one active prom
   engine.watchers.clear()
 })
 
+test('the job policy is journaled and survives a restart', async () => {
+  const { engine, dir } = makeEngine()
+  declareDev(engine)
+  feedTurn(engine.collector, SESSION, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/a.js' } }], assistant: 'done' })
+  const selected = engine.select({ capability: 'code.change', need: 'fix it', riskTier: 1 }, { sessionId: SESSION.id, turn: 1 })
+  await engine.settle({ jobId: selected.jobId, outcome: 'success', output: 'diff' }, { sessionId: SESSION.id, turn: 1 })
+  const job = engine.state.jobs.get(selected.jobId)
+  assert.ok(job.policy?.id)
+
+  const reloaded = new Ledger({ dir, snapshotEvery: 100, prior: 0.5, halfLifeDays: 14 }).open()
+  assert.equal(reloaded.state.jobs.get(selected.jobId).policy?.id, job.policy.id)
+})
+
 test('a delegated settlement records the child policy and trusts it separately', async () => {
   const { engine, collector } = makeEngine()
   engine.declare({

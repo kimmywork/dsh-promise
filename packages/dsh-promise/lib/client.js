@@ -285,7 +285,7 @@ window.__ModuleLoader__.load({
       const dialogRef = react.useRef(null)
       const triggerRef = react.useRef(null)
       const refreshRef = react.useRef(null)
-      const outsideRef = react.useRef(null)
+      const cleanupRef = react.useRef([])
 
       // Load on mount and keep the badge fresh: the ledger can change from a
       // settlement or an auto-bound delegation while this header is mounted.
@@ -343,15 +343,18 @@ window.__ModuleLoader__.load({
         dialog.style.width = `${width}px`
       }
 
-      const removeOutsideListener = () => {
-        if (outsideRef.current && typeof document !== 'undefined') {
-          document.removeEventListener('pointerdown', outsideRef.current, true)
-        }
-        outsideRef.current = null
+      const clearListeners = () => {
+        for (const remove of cleanupRef.current) remove()
+        cleanupRef.current = []
+      }
+
+      const isPanelOpen = () => {
+        const panel = dialogRef.current
+        return panel !== null && typeof panel.matches === 'function' && panel.matches(':popover-open')
       }
 
       const closePanel = () => {
-        removeOutsideListener()
+        clearListeners()
         const panel = dialogRef.current
         if (!panel) return
         if (typeof panel.hidePopover === 'function' && panel.matches(':popover-open')) panel.hidePopover()
@@ -365,21 +368,30 @@ window.__ModuleLoader__.load({
         // The Popover API is a non-modal top layer: no inert backdrop, but still
         // above the conversation's overflow/stacking contexts.
         if (typeof panel.showPopover === 'function') {
-          if (!panel.matches(':popover-open')) panel.showPopover()
+          if (!isPanelOpen()) panel.showPopover()
         } else {
           panel.setAttribute('open', '')
         }
-        removeOutsideListener()
+        clearListeners()
         if (typeof document !== 'undefined') {
-          const onPointer = (event) => {
+          const add = (target, type, listener, options) => {
+            target.addEventListener(type, listener, options)
+            cleanupRef.current.push(() => target.removeEventListener(type, listener, options))
+          }
+          add(document, 'pointerdown', (event) => {
             if (panel.contains(event.target) || triggerRef.current?.contains(event.target)) return
             closePanel()
-          }
-          outsideRef.current = onPointer
-          document.addEventListener('pointerdown', onPointer, true)
+          }, true)
+          add(document, 'keydown', (event) => {
+            if (event.key === 'Escape') closePanel()
+          })
+          add(window, 'scroll', placePanel, true)
+          add(window, 'resize', placePanel)
         }
         refreshRef.current?.()
       }
+
+      react.useEffect(() => () => clearListeners(), [])
 
       const header = snapshot?.header
       const label = `${t('action')}${header ? ` ${header.promises} · ${Number(header.credit).toFixed(2)}` : ''} ▾`
@@ -430,7 +442,10 @@ window.__ModuleLoader__.load({
           type: 'button',
           style: styles.trigger,
           'data-promise-credits': 'trigger',
-          onClick: openPanel,
+          onClick: () => {
+            if (isPanelOpen()) closePanel()
+            else openPanel()
+          },
         }, label),
         react.createElement('div', {
           key: 'dialog',
