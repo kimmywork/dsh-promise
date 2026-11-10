@@ -19,6 +19,7 @@ export function decide(input = {}) {
     pass: input.thresholds?.pass ?? 0.7,
     claim: input.thresholds?.claim ?? 0.6,
     fail: input.thresholds?.fail ?? 0.3,
+    minConfidence: input.thresholds?.minConfidence ?? 0,
   }
   const hardFailures = rules.filter((rule) => rule.hard !== false && rule.ok === false).map((rule) => rule.id)
   const hardRules = rules.filter((rule) => rule.hard !== false)
@@ -57,6 +58,16 @@ export function decide(input = {}) {
   const contradicted = clamp01(semantic.claimsContradicted ?? 0)
   let confidence = clamp01(semantic.confidence ?? 0.5)
   if (input.truncated || semantic.unstable) confidence = Math.min(confidence, 0.5)
+
+  if (confidence < thresholds.minConfidence) {
+    return {
+      verdict: 'undetermined',
+      confidence,
+      failureMode: semantic.failureMode ?? 'none',
+      rationale: `semantic confidence ${confidence.toFixed(2)} is below the floor ${thresholds.minConfidence}`,
+      hardFailures,
+    }
+  }
 
   const contradictedClaim = contradicted >= 0.7
   let verdict

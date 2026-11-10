@@ -2,7 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import { buildTools } from '../src/tools.js'
-import { declareDev, feedTurn, makeEngine, makeJev, SESSION } from './helpers.js'
+import { declareDev, feedTurn, makeConfig, makeEngine, makeJev, SESSION, tempDir } from './helpers.js'
+import { Ledger } from '../src/ledger.js'
+import { SessionCollector } from '../src/collector.js'
+import { PromiseEngine } from '../src/engine.js'
 
 const BAD_OUTPUT = '--- a/src/a.js\n+++ b/src/a.js\n+const secret = "sk-abcdefghijklmnop123"'
 
@@ -342,4 +345,110 @@ test('an ambiguous delegation binds nothing', () => {
     callerAgent: { session: SESSION },
   })
   assert.equal(bound, null)
+})
+
+
+const VIOLATING = {
+  addresses_request: { type: 'noul', noul: 0.05 },
+  claims_contradicted: { type: 'noul', noul: 0.1 },
+  absolute_quality: { type: 'score', score: 0.6, confidence: 0.6 },
+  input_quality: { type: 'score', score: 3, confidence: 0.6 },
+  process_quality: { type: 'score', score: 0.8, confidence: 0.6 },
+  failure_mode: { type: 'choice', choice: 'capability', confidence: 0.7 },
+  unmet_requirement: { type: 'choice', choice: 'fix', confidence: 0.8 },
+}
+
+test('a violated settlement returns a schema-valid breach payload', async () => {
+  const jev = makeJev({ answers: VIOLATING })
+  const { engine, collector } = makeEngine({ jev, config: { assessment: { sampleRate: 1 } } })
+  declareDev(engine, { assessment: { policy: 'L3' } })
+  feedTurn(collector, SESSION, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/a.js' } }], assistant: 'done' })
+  const selected = engine.select({ capability: 'code.change', need: 'fix it', riskTier: 3 }, { sessionId: SESSION.id, turn: 1 })
+  const tools = buildTools(engine, collector, () => {}, {})
+  const settleTool = tools.find((tool) => tool.name === 'promise_settle')
+  const result = await settleTool.execute(
+    { jobId: selected.jobId, outcome: 'success', output: 'diff' },
+    { agent: { session: SESSION }, signal: new AbortController().signal },
+  )
+  assert.equal(result.verdict, 'violated')
+  assert.ok(result.breach?.action)
+  assert.deepEqual(validateJsonSchemaValue(settleTool.output.schema, result, 'value'), [])
+})
+
+test('enrichment applies a breach with its before-snapshot and is idempotent', async () => {
+  const jev = makeJev({ answers: VIOLATING })
+  const { engine, collector } = makeEngine({ jev, config: { trust: { coldStartMass: 0 }, assessment: { sampleRate: 1 } } })
+  engine.declare({
+    agent: 'preset:enrich',
+    capability: 'code.enrich',
+    statement: 'deliver a diff that implements the request',
+    rules: [{ id: 'scope', kind: 'files-within', globs: ['src/**'] }],
+    requirements: [{ id: 'fix', text: 'the requested behavior is implemented' }],
+    assessment: { policy: 'L1' },
+  })
+  feedTurn(collector, SESSION, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/a.js' } }], assistant: 'done' })
+  const selected = engine.select({ capability: 'code.enrich', need: 'fix it', riskTier: 0 }, { sessionId: SESSION.id, turn: 1 })
+  await engine.autoSettle(SESSION.id, 1)
+  assert.equal(engine.state.jobs.get(selected.jobId).closedBy, 'auto')
+
+  engine.declare({
+    agent: 'preset:enrich',
+    capability: 'code.enrich',
+    statement: 'deliver a diff that implements the request',
+    rules: [{ id: 'scope', kind: 'files-within', globs: ['src/**'] }],
+    requirements: [{ id: 'fix', text: 'the requested behavior is implemented' }],
+    assessment: { policy: 'L3' },
+  })
+  const enriched = await engine.settle({ jobId: selected.jobId, output: 'diff' }, { sessionId: SESSION.id, turn: 1 })
+  assert.equal(enriched.verdict, 'violated')
+  assert.equal([...engine.state.promises.values()].find((promise) => promise.capability === 'code.enrich').status, 'probation')
+
+  const again = await engine.settle({ jobId: selected.jobId, output: 'diff' }, { sessionId: SESSION.id, turn: 1 })
+  assert.match(again.note, /already enriched/)
+})
+
+test('model-declared thresholds are clamped or ignored when unordered', () => {
+  const { engine } = makeEngine()
+  const { promise } = engine.declare({
+    agent: 'preset:x',
+    capability: 'code.thresholds',
+    statement: 'deliver something checkable',
+    assessment: { policy: 'L2', passThreshold: -1, failThreshold: 10, minConfidence: 7 },
+  })
+  assert.equal(promise.assessment.passThreshold, undefined)
+  assert.equal(promise.assessment.failThreshold, undefined)
+  assert.equal(promise.assessment.minConfidence, 1)
+})
+
+test('delegation links are rebuilt after a restart', () => {
+  const dir = tempDir()
+  const { engine } = makeEngine({ dir })
+  declareDev(engine, { agent: 'team:restart' })
+  const selected = engine.select({ capability: 'code.change', need: 'fix' }, { sessionId: SESSION.id, turn: 1 })
+  engine.linkDelegation(selected.jobId, { kind: 'team', name: 'restart', sessionId: 'team-session-r' })
+  for (const timer of engine.watchers.values()) clearInterval(timer)
+  engine.watchers.clear()
+
+  const config = makeConfig({})
+  const ledger = new Ledger({ dir, snapshotEvery: 50, prior: config.trust.prior, halfLifeDays: config.trust.halfLifeDays, logger: () => {} }).open()
+  const reopened = new PromiseEngine({ config, ledger, collector: new SessionCollector(), jev: null, logger: () => {} })
+  assert.equal(reopened.delegationBySession.get('team-session-r'), selected.jobId)
+})
+
+test('a timed-out host check is skipped, not treated as a violation', async () => {
+  const { engine, collector } = makeEngine({
+    config: { trust: { coldStartMass: 0 }, checks: { allowModelDeclared: true, allowlist: ['^sleep$'] } },
+  })
+  engine.declare({
+    agent: 'preset:slow',
+    capability: 'code.slow',
+    statement: 'deliver a result whose check finishes',
+    checks: [{ id: 'slow', run: 'sleep 2', timeoutMs: 100 }],
+    assessment: { policy: 'L1' },
+  })
+  feedTurn(collector, SESSION, { turn: 1, tools: [{ name: 'edit', args: { path: 'src/a.js' } }], assistant: 'done' })
+  const selected = engine.select({ capability: 'code.slow', need: 'run it', riskTier: 0 }, { sessionId: SESSION.id, turn: 1 })
+  const result = await engine.settle({ jobId: selected.jobId, outcome: 'success', output: 'diff' }, { sessionId: SESSION.id, turn: 1 })
+  assert.equal(result.rules.find((rule) => rule.id === 'slow').skipped, true)
+  assert.equal(result.verdict, 'undetermined')
 })

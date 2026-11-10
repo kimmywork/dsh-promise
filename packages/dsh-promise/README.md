@@ -15,7 +15,7 @@
 ## 状态
 
 - P0，Node ≥ 20.11，纯 ESM，无构建步骤。
-- 82 个离线单元测试（`npm test`），不触网。
+- 97 个离线单元测试（`npm test`），不触网。
 - `tools/calibrate.js` 用于在真实数据上校准评估器；**未校准前不要让语义证据单独决定信任**（见下文）。
 
 ---
@@ -306,7 +306,7 @@ src/
   collector.js   会话事件采集
   tools.js       五个模型侧工具
   prompt.js      静态协议段（无承诺时为空）
-test/            82 个离线测试
+test/            97 个离线测试
 tools/           calibrate.js
 examples/        示例承诺
 ```
@@ -316,5 +316,5 @@ examples/        示例承诺
 ## 测试
 
 ```bash
-npm test          # 82 tests, 无网络
+npm test          # 97 tests, 无网络
 ```

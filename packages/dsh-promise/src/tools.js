@@ -300,9 +300,14 @@ export function buildTools(engine, collector, log, deps = {}) {
             evidenceWeight: number('weight of this evidence'),
           }, false),
           breach: OBJECT({
+            jobId: string('job id'),
+            promiseId: string('promise id'),
+            agent: string('agent id'),
+            capability: string('capability'),
             action: string('none, probation or suspend'),
             reason: string('why'),
           }, false),
+          closedAt: string('settlement timestamp when the job was already settled'),
           recovery: OBJECT({
             action: string('probation-progress or restored'),
             passes: integer('consecutive passes'),

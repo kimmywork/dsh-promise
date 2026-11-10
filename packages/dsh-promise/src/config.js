@@ -46,6 +46,8 @@ export const Config = z.object({
     passThreshold: z.number().min(0).max(1).default(0.7),
     claimThreshold: z.number().min(0).max(1).default(0.6),
     failThreshold: z.number().min(0).max(1).default(0.3),
+    /** Semantic confidence below this floor is undetermined, regardless of p. */
+    minConfidence: z.number().min(0).max(1).default(0.45),
     /** Above this the answer is stable enough not to resample. */
     boundaryHigh: z.number().min(0).max(1).default(0.85),
     resample: z.boolean().default(true),

@@ -39,6 +39,14 @@ export class PromiseEngine {
     this.delegationBySession = new Map()
     this.watchers = new Map()
     this.settling = new Set()
+    // Rebuild links for jobs that survived a restart; completion signals can
+    // still settle them even though the runtime handles are gone.
+    for (const job of this.state.jobs.values()) {
+      if (job.closedAt || !job.delegation?.sessionId) continue
+      const link = { ...job.delegation, settled: false }
+      this.delegations.set(job.id, link)
+      this.delegationBySession.set(String(job.delegation.sessionId), job.id)
+    }
   }
 
   get state() {
@@ -341,6 +349,12 @@ export class PromiseEngine {
   }
 
   async #enrich(job, promise, input, context) {
+    const already = [...this.state.assessments.values()].some(
+      (assessment) => assessment.jobId === job.id && assessment.method === 'jev',
+    )
+    if (already) {
+      return { jobId: job.id, verdict: job.verdict, note: 'job was already enriched; no second semantic assessment', level: job.level }
+    }
     const outputText = String(input.output ?? '')
     if (!outputText || !this.jev?.configured) {
       return { jobId: job.id, verdict: job.verdict, note: 'job was auto-settled; no semantic enrichment applied', level: job.level }
@@ -405,8 +419,9 @@ export class PromiseEngine {
         weight: LEVEL_WEIGHT[planned.level] * (0.5 + 0.5 * verdict.confidence),
         at: Date.now(),
       }]
+      const viewBefore = this.trustFor(promise.agent, promise.capability)
       this.ledger.append('assessment/recorded', { assessment, evidence })
-      const breach = verdict.verdict === 'violated' ? this.#applyBreach(promise, job, assessment) : null
+      const breach = verdict.verdict === 'violated' ? this.#applyBreach(promise, job, assessment, viewBefore) : null
       return { jobId: job.id, verdict: verdict.verdict, layers, confidence: verdict.confidence, rationale: verdict.rationale, breach, note: 'semantic enrichment of an auto-settled job' }
     } catch (error) {
       this.#warn(`semantic enrichment failed: ${error?.message ?? error}`)
@@ -789,6 +804,7 @@ export class PromiseEngine {
       pass: promise.assessment?.passThreshold ?? this.config.assessment.passThreshold,
       claim: this.config.assessment.claimThreshold,
       fail: promise.assessment?.failThreshold ?? this.config.assessment.failThreshold,
+      minConfidence: promise.assessment?.minConfidence ?? this.config.assessment.minConfidence,
     }
   }
 
@@ -911,9 +927,21 @@ export class PromiseEngine {
         results.push({ id, ok: null, skipped: true, detail: 'command not in checks.allowlist' })
         continue
       }
+      const requested = Number.isFinite(check.timeoutMs) ? check.timeoutMs : this.config.checks.timeoutMs
+      const timeoutMs = Math.min(Math.max(requested, 1000), this.config.checks.timeoutMs)
       const started = Date.now()
-      const outcome = await execCommand(check.run, cwd ?? process.cwd(), check.timeoutMs ?? this.config.checks.timeoutMs)
-      results.push({ id, ok: outcome.code === 0, skipped: false, detail: `exit ${outcome.code ?? 'timeout'} in ${Date.now() - started}ms` })
+      const outcome = await execCommand(check.run, cwd ?? process.cwd(), timeoutMs)
+      if (outcome.code === null) {
+        // A timeout or a failed start is a missing measurement, not a failed promise.
+        results.push({
+          id,
+          ok: null,
+          skipped: true,
+          detail: outcome.timedOut ? `check timed out after ${timeoutMs}ms` : 'check failed to start',
+        })
+      } else {
+        results.push({ id, ok: outcome.code === 0, skipped: false, detail: `exit ${outcome.code} in ${Date.now() - started}ms` })
+      }
     }
     return results
   }
@@ -1019,12 +1047,20 @@ function normalizeSignals(signals = {}) {
 
 function normalizeAssessment(assessment, config) {
   const policy = ['L0', 'L1', 'L2', 'L3', 'auto'].includes(String(assessment?.policy)) ? String(assessment.policy) : 'auto'
+  const unit = (value) => (Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : undefined)
+  let passThreshold = unit(assessment?.passThreshold)
+  let failThreshold = unit(assessment?.failThreshold)
+  // A model-declared pair that cannot be ordered is ignored; config defaults win.
+  if (passThreshold !== undefined && failThreshold !== undefined && failThreshold >= passThreshold) {
+    passThreshold = undefined
+    failThreshold = undefined
+  }
   return {
     policy,
     sampleRate: Number.isFinite(assessment?.sampleRate) ? Math.min(1, Math.max(0, assessment.sampleRate)) : undefined,
-    passThreshold: Number.isFinite(assessment?.passThreshold) ? assessment.passThreshold : undefined,
-    failThreshold: Number.isFinite(assessment?.failThreshold) ? assessment.failThreshold : undefined,
-    minConfidence: Number.isFinite(assessment?.minConfidence) ? assessment.minConfidence : undefined,
+    passThreshold,
+    failThreshold,
+    minConfidence: unit(assessment?.minConfidence),
   }
 }
 
@@ -1036,14 +1072,34 @@ function normalizeConstraints(constraints = {}) {
   return out
 }
 
+function checkEnv() {
+  const keep = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'PWD']
+  const env = { NO_COLOR: '1' }
+  for (const key of keep) if (process.env[key] !== undefined) env[key] = process.env[key]
+  return env
+}
+
 function execCommand(command, cwd, timeoutMs) {
   return new Promise((resolve) => {
-    const child = spawn('sh', ['-c', command], { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn('sh', ['-c', command], {
+      cwd,
+      env: checkEnv(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    })
     let settled = false
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
-      child.kill('SIGKILL')
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // already gone
+        }
+      }
       resolve({ code: null, timedOut: true })
     }, timeoutMs)
     child.on('error', () => {
