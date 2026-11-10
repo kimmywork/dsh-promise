@@ -183,7 +183,9 @@ subagent.row.meta          (session) -> ReactNode
 | 隐式 select + 自动绑定 + 自动结算（team） | 单测覆盖；**需重启到含 `25d0ed3` 的 build 后做一次真实验证** |
 | subagent/end 自动结算 | 单测覆盖；本部署 subagent 被禁用，未实测 |
 | ds-bot 自动结算 | 不支持 |
-| UI 卡片注释 | 单测覆盖；重启后可见 |
+| UI 卡片注释 | 单测覆盖；真实宿主重启后可见 |
+| Web boot（0.1.1） | 真实宿主重启通过：`承诺` 按钮可见，无 `dsh-promise: import failed` |
+| 信用面板数据 | Client descriptor 已挂载（按钮只在 `$mount` 成功后注册）；点开面板的 Remote 调用待确认 |
 
 验证清单（重启后）：
 
