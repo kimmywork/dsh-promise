@@ -2,6 +2,25 @@
   "name": "dsh-promise",
   "version": "0.1.1",
   "description": "Promise Theory trust, assessment and routing layer for DeepSeek Harness",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "promise-theory",
+    "trust",
+    "agent"
+  ],
+  "author": "Kimmy <dev.kimmy.leo@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kimmywork/dsh-promise.git",
+    "directory": "packages/dsh-promise"
+  },
+  "homepage": "https://github.com/kimmywork/dsh-promise#readme",
+  "bugs": {
+    "url": "https://github.com/kimmywork/dsh-promise/issues"
+  },
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -17,9 +36,9 @@
     "cordis.patch.yml",
     "README.md",
     "install.sh",
-    "docs"
+    "docs",
+    "LICENSE"
   ],
-  "license": "MIT",
   "engines": {
     "node": ">=20.11"
   },
@@ -46,6 +65,10 @@
     "@deepseek-ai/dsh-typert-protocol": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "experimental"
   },
   "dsh": {
     "bundle": {

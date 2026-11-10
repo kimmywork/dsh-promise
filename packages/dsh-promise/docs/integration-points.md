@@ -1,5 +1,7 @@
 # 接入点与触发点（对照 Promise Agent 系列）
 
+> 系列原文已归档：[docs/promise-agent.md](https://github.com/kimmywork/dsh-promise/blob/main/docs/promise-agent.md)。本文只讲实现侧：概念映射、触发点、自动绑定程度与 UI 反馈。
+
 这份文档回答三个问题：
 
 1. 文章里的概念，在这套实现里对应什么；
@@ -21,7 +23,7 @@
 | 超级代理 | `promise_compose` + `composition` 记录 | 外部信任与子代理健康分离 |
 | L0–L3 评估阶梯 | `planner.planLevel()` | 风险/可逆/价值/证据量/预算共同决定，模型不自报 |
 | 三层评估 | `assess.js`：absolute / relative / process | relative 用账本基线，不用反事实 |
-| 迁移四阶段 | README 的 P0–P3 / `examples/` | 声明、L1、L2 抽样、L3 门禁 |
+| 迁移四阶段 | `examples/` + 评估级别 L0–L3 | 声明、L1、L2 抽样、L3 门禁 |
 | 「结果带可信度」 | `promise_select` / `promise_settle` 卡片 + `promise_inspect` | 自动路径另见 §5 |
 | 工具也是承诺 | `agent` 可用 `tool:<name>`，`invokeHint` 返回 `{kind:"tool"}` | 工具承诺仍需手动 settle |
 | 无中央控制 | 不成立也不假装成立：DSH 仍有 Lead/编排器 | 本实现把委派变成**有记录、可质询**，而不是取消编排 |
@@ -161,8 +163,6 @@ subagent.row.meta          (session) -> ReactNode
 - Client：`$mount` 失败（namespace 未发布/降级组合）时**不注册按钮**，插件页与工具不受影响；
 - Host：`@deepseek-ai/dsh-typert-protocol` 导入失败或服务注册失败时只记一条 warn，插件其余部分照常启动。
 
-0.1.1 修复了 client 工厂的 `inject is not defined`（它会让整个 Web boot 失败），并补了直接执行客户端工厂的回归测试。
-
 ---
 
 ## 6. 与文章的对应关系
@@ -184,7 +184,7 @@ subagent.row.meta          (session) -> ReactNode
 | subagent/end 自动结算 | 单测覆盖；本部署 subagent 被禁用，未实测 |
 | ds-bot 自动结算 | 不支持 |
 | UI 卡片注释 | 单测覆盖；真实宿主重启后可见 |
-| Web boot（0.1.1） | 真实宿主重启通过：`承诺` 按钮可见，无 `dsh-promise: import failed` |
+| Web boot | 真实宿主重启通过：`承诺` 按钮可见，无 `dsh-promise: import failed` |
 | 信用面板数据 | Client descriptor 已挂载（按钮只在 `$mount` 成功后注册）；点开面板的 Remote 调用待确认 |
 
 验证清单（重启后）：

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Install dsh-promise into a DSH profile without editing the profile for you.
 #
-#   ./install.sh                      print the steps
-#   ./install.sh --apply              run `pnpm add file:<this package>` in the profile
-#   ./install.sh --apply --profile web
+#   ./install.sh                          print the steps (local checkout)
+#   ./install.sh --from npm               print the steps for the npm package
+#   ./install.sh --apply                  install from this checkout (default)
+#   ./install.sh --apply --from npm       install dsh-promise from the npm registry
+#   ./install.sh --apply --profile web    target a different profile
 #
 # The script never edits cordis.patch.yml: it prints the exact row to paste.
 set -euo pipefail
@@ -12,13 +14,28 @@ PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
 PROFILE_NAME="desktop"
 APPLY=0
+FROM="file"
+
+usage() {
+  sed -n '2,10p' "$0"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=1 ;;
-    --profile) PROFILE_NAME="${2:?missing profile name}"; shift ;;
+    --from)
+      FROM="${2:?missing npm|file value}"
+      shift
+      ;;
+    --from=*)
+      FROM="${1#--from=}"
+      ;;
+    --profile)
+      PROFILE_NAME="${2:?missing profile name}"
+      shift
+      ;;
     -h|--help)
-      sed -n '2,8p' "$0"
+      usage
       exit 0
       ;;
     *)
@@ -29,20 +46,40 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+case "$FROM" in
+  npm|file) ;;
+  *)
+    echo "invalid --from value: $FROM (expected \"npm\" or \"file\")" >&2
+    exit 2
+    ;;
+esac
+
 PROFILE_DIR="$DSH_HOME/profiles/$PROFILE_NAME"
+
+if [[ "$FROM" == "npm" ]]; then
+  SOURCE_LINE="  source  : npm registry (dsh-promise@experimental)"
+  INSTALL_CMD='pnpm add --force dsh-promise@experimental'
+  SOURCE_NOTE='   Published on the "experimental" dist-tag; there is no "latest" tag until
+   the first stable release, so always pin the tag when installing.'
+else
+  SOURCE_LINE="  source  : local checkout ($PKG_DIR)"
+  INSTALL_CMD="pnpm add --force \"file:$PKG_DIR\""
+  SOURCE_NOTE="   Installs this checkout; no registry access is required."
+fi
 
 cat <<EOF
 dsh-promise — profile "$PROFILE_NAME"
-  package : $PKG_DIR
+$SOURCE_LINE
   profile : $PROFILE_DIR
 
-1. Install the package into the profile (run this yourself).
-   dsh-promise is a bundle (package.json -> dsh.bundle), so after this it shows
-   up in the sidebar 插件 page as an installed bundle you can toggle:
+1. Install the package into the profile (run this yourself):
+$SOURCE_NOTE
 
      cd "$PROFILE_DIR"
-     pnpm add --force "file:$PKG_DIR"
+     $INSTALL_CMD
 
+   dsh-promise is a bundle (package.json -> dsh.bundle), so after this it shows
+   up in the sidebar 插件 page as an installed bundle you can toggle.
    Restart DSH, open 插件 -> 已安装插件 -> dsh-promise, then turn it on.
    (Without restart, the plugin manager may not see the new bundle manifest.)
 
@@ -71,6 +108,8 @@ dsh-promise — profile "$PROFILE_NAME"
 Notes
   - Without TYPESAFE_API_KEY the plugin runs L1-only and logs one warning.
   - Model-declared shell checks are inert until checks.allowModelDeclared=true.
+  - To switch install source: ./install.sh --from npm [--apply], or
+    ./install.sh --from file [--apply] (default).
   - Data lives in \$DSH_HOME/promise (ledger.jsonl + snapshot.json).
 EOF
 
@@ -80,7 +119,12 @@ if [[ "$APPLY" == "1" ]]; then
     exit 1
   fi
   echo
-  echo "==> pnpm add --force file:$PKG_DIR (in $PROFILE_DIR)"
-  (cd "$PROFILE_DIR" && pnpm add --force "file:$PKG_DIR")
+  if [[ "$FROM" == "npm" ]]; then
+    echo "==> pnpm add --force dsh-promise@experimental (in $PROFILE_DIR)"
+    (cd "$PROFILE_DIR" && pnpm add --force dsh-promise@experimental)
+  else
+    echo "==> pnpm add --force file:$PKG_DIR (in $PROFILE_DIR)"
+    (cd "$PROFILE_DIR" && pnpm add --force "file:$PKG_DIR")
+  fi
   echo "==> installed. Restart DSH, then enable it in the sidebar 插件 page (or use the YAML fallback above)."
 fi

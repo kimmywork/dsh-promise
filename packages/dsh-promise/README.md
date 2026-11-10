@@ -1,5 +1,9 @@
 # dsh-promise
 
+> ⚠️ **试验性插件（experimental）**：这是 Promise Theory 在 DeepSeek Harness 上的一次实验性实现。**API、信任数学与 Jev 校准都不是生产稳定（production-stable）的**，可能随时变化；生产或高风险场景请自行评估、谨慎采用。
+>
+> 背景文章：<https://x.com/kenpusney/status/2119797864058769860>
+
 给 DeepSeek Harness 加一层**可问责的委派基础设施**：承诺（promise）、证据（evidence）、信任（trust）、结算（settlement）。
 
 它不是编排器，不接管工具调用，也不替你重试。它做三件事：
@@ -8,30 +12,34 @@
 2. **做之后**：用规则、可执行检查和类型化语义评估（Jev）判定承诺是否兑现。
 3. **长期**：把每次判定累积成按能力、按评估者分离的信任，违约有代价、有恢复路径。
 
-设计文档见仓库根目录的 [`DESIGN.md`](../../DESIGN.md)；接入点、触发点与「无感」程度见 [`docs/integration-points.md`](docs/integration-points.md)；本文档只讲怎么用、边界在哪。
+接入点、触发点与「无感」程度见 [`docs/integration-points.md`](docs/integration-points.md)；本文档只讲怎么用、边界在哪。
+
+**链接**：仓库 <https://github.com/kimmywork/dsh-promise> · 项目主页 <https://github.com/kimmywork/dsh-promise#readme> · 背景文章 <https://x.com/kenpusney/status/2119797864058769860>
 
 ---
 
 ## 状态
 
-- P0，Node ≥ 20.11，纯 ESM，无构建步骤。
+- 试验性（P0 原型），Node ≥ 20.11，纯 ESM，无构建步骤。
 - 124 个离线单元测试（`npm test`），不触网。
 - `tools/calibrate.js` 用于在真实数据上校准评估器；**未校准前不要让语义证据单独决定信任**（见下文）。
 
-### 0.1.1 修复的启动故障
-
-0.1.0 的客户端模块把 `inject` 声明写在了 `apply()` 内部，模块工厂执行时抛
-`ReferenceError: inject is not defined`，导致 Web boot 报
-`dsh-promise: import failed`、整个界面无法激活。0.1.1 把它移到模块作用域，
-并新增 `test/client.test.js`：**直接执行客户端工厂**，同时覆盖 Remote 缺失时
-自动隐藏信用面板的降级路径。宿主侧的 Typert 协议导入也改为惰性、可失败，
-缺少该 peer 时插件仍能启动（只是没有信用面板）。
+客户端侧（插件页的 Jev 配置表单，以及会话头部的「承诺 N · credit」按钮）是尽力而为的附加能力：Remote 不可用时按钮不注册，插件其余部分照常启动；宿主侧 Typert 协议导入失败时只记一条 warn，不会阻止插件启动。
 
 ---
 
 ## 安装
 
 这个包是 **bundle**（`package.json` 里的 `dsh.bundle` 指向自带的 `cordis.patch.yml`），所以它可以在 DSH 侧栏的**插件**页里被看到和启停。
+
+从 npm 安装（实验性 dist-tag）：
+
+```bash
+cd ~/.dsh/profiles/desktop
+pnpm add --force dsh-promise@experimental
+```
+
+或从本仓库 checkout 安装：
 
 ```bash
 cd packages/dsh-promise
@@ -335,13 +343,13 @@ gate: PASS — semantic evidence may update trust at L2/L3
 - **Jev 的地区可用性**：TypeSafe 在部分地区直连返回 `451 not available in your region`；DSH 进程的 `fetch` 会继承 `https_proxy` / `NODE_USE_ENV_PROXY`，所以需要一个可用代理。代理不可用时插件会跳过语义层、只跑 L1，并在 `promise_settle` 的 `semantic` 里报告 `code: "network"`/`"region-blocked"`。
 - **不要求多智能体或 Agent Teams**：单 agent、单工具也能声明与结算；只有在有多个候选代理时，`promise_select` 的排序才有实际意义（否则它只负责记账）。
 - Jev 看不到运行时：代码正确性必须由测试/编译器判定，语义层只判「需求贴合 + 过程」。
-- 32k 上下文：超限会截断重试，并压低置信上限；超长 diff 建议分片评估（P1）。
+- 32k 上下文：超限会截断重试，并压低置信上限；超长 diff 建议分片评估（尚未实现）。
 - 中间带不确定：`p ∈ (0.3, 0.85)` 会双采样；仍然模糊就记 `undetermined`，不硬判。
 - 自动归属有误差：多候选时只记 observation，不写信任；单候选按 ×0.5 权重。
 - **承诺文本就是契约**：同一份好输出，statement 写 "sourced brief" 而输出没有来源时，Jev 会把 `addresses_request` 压到 0.55；改成准确描述后升到 0.92。声明要精确，模糊承诺会压低兑现判定（这是对的）。
 - **没有证据就没有信任**：只有 diff、没有测试/规则证据时，正确实现的判定也常在 0.6–0.7 徘徊，最终记 `undetermined`。请给核心能力声明 `requirements` + `checks`。
-- 没有客户端面板：v1 用工具卡片 + `promise_inspect` 文本；面板是 v2。
-- 单进程写入：JSONL 假设一个宿主进程；多进程并发写不在 P0 范围内。
+- 客户端面板是尽力而为的附加能力：Remote 不可用时「承诺 N · credit」按钮不注册，工具卡片与 `promise_inspect` 文本始终可用。
+- 单进程写入：JSONL 假设一个宿主进程；多进程并发写不在当前实验范围内。
 
 ---
 
@@ -361,7 +369,7 @@ src/
   jev.js         TypeSafe System One 客户端
   assess.js      state/问题组装、映射、双采样、截断重试
   collector.js   会话事件采集
-  tools.js       五个模型侧工具
+  tools.js       六个模型侧工具（declare/select/settle/delegate/inspect/compose）
   prompt.js      静态协议段（无承诺时为空）
 test/            124 个离线测试
 tools/           calibrate.js
@@ -373,5 +381,5 @@ examples/        示例承诺
 ## 测试
 
 ```bash
-npm test          # 100 tests, 无网络
+npm test          # 124 tests, 无网络
 ```
