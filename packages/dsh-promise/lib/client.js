@@ -352,27 +352,27 @@ window.__ModuleLoader__.load({
 
       const closePanel = () => {
         removeOutsideListener()
-        const dialog = dialogRef.current
-        if (!dialog) return
-        if (typeof dialog.close === 'function' && dialog.open) dialog.close()
-        else dialog.removeAttribute('open')
+        const panel = dialogRef.current
+        if (!panel) return
+        if (typeof panel.hidePopover === 'function' && panel.matches(':popover-open')) panel.hidePopover()
+        else panel.removeAttribute('open')
       }
 
       const openPanel = () => {
-        const dialog = dialogRef.current
-        if (!dialog) return
+        const panel = dialogRef.current
+        if (!panel) return
         placePanel()
-        // show() (not showModal) keeps the top-layer positioning without making
-        // the rest of the conversation inert behind an invisible modal backdrop.
-        if (typeof dialog.show === 'function') {
-          if (!dialog.open) dialog.show()
+        // The Popover API is a non-modal top layer: no inert backdrop, but still
+        // above the conversation's overflow/stacking contexts.
+        if (typeof panel.showPopover === 'function') {
+          if (!panel.matches(':popover-open')) panel.showPopover()
         } else {
-          dialog.setAttribute('open', '')
+          panel.setAttribute('open', '')
         }
         removeOutsideListener()
         if (typeof document !== 'undefined') {
           const onPointer = (event) => {
-            if (dialog.contains(event.target) || triggerRef.current?.contains(event.target)) return
+            if (panel.contains(event.target) || triggerRef.current?.contains(event.target)) return
             closePanel()
           }
           outsideRef.current = onPointer
@@ -432,14 +432,13 @@ window.__ModuleLoader__.load({
           'data-promise-credits': 'trigger',
           onClick: openPanel,
         }, label),
-        react.createElement('dialog', {
+        react.createElement('div', {
           key: 'dialog',
           ref: dialogRef,
+          popover: 'manual',
+          role: 'dialog',
           'data-promise-credits': 'dialog',
           style: styles.dialog,
-          onClick: (event) => {
-            if (event.target === event.currentTarget) closePanel()
-          },
         }, [
           react.createElement('div', {
             key: 'panel',
