@@ -1,0 +1,437 @@
+/**
+ * The five model-facing tools. Each one is a thin adapter over PromiseEngine;
+ * all policy (routing, verdicts, breach) stays in the engine, not in a prompt.
+ * @module dsh-promise/tools
+ */
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+const string = (description, extra = {}) => ({ type: 'string', description, ...extra })
+const number = (description) => ({ type: 'number', description })
+const integer = (description) => ({ type: 'integer', description })
+
+const OBJECT = (properties, required = true) => ({ type: 'object', additionalProperties: false, properties })
+
+const stringArray = (description, itemDescription = '') => ({
+  type: 'array',
+  description,
+  items: { type: 'string', description: itemDescription },
+})
+
+const candidateSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    promiseId: string('promise id'),
+    agent: string('agent id'),
+    capability: string('capability'),
+    trust: number('aggregated trust'),
+    lower: number('wilson lower bound used for ranking'),
+    mass: number('decayed evidence mass'),
+    count: integer('number of assessments'),
+    score: number('final routing score'),
+    reasons: stringArray('why this candidate ranked here'),
+  },
+}
+
+/**
+ * @param {import('./engine.js').PromiseEngine} engine
+ * @param {import('./collector.js').SessionCollector} collector
+ * @param {(level:string, message:string)=>void} log
+ */
+export function buildTools(engine, collector, log) {
+  const contextOf = (exec) => {
+    const session = exec?.agent?.session
+    const sessionId = session?.id ? String(session.id) : undefined
+    return {
+      sessionId,
+      turn: sessionId ? collector.lastTurn(sessionId) : 0,
+      cwd: session?.header?.cwd,
+      signal: exec?.signal,
+    }
+  }
+
+  const declare = defineTool({
+    name: 'promise_declare',
+    description: 'Declare or update a falsifiable quality promise for one agent and one capability. A good promise states the conditions, the measurable quality bar, and the evidence that can falsify it. Use capability names such as code.change or research.brief. Re-declaring the same agent+capability bumps its version.',
+    parameters: {
+      agent: string('Agent id: preset:<name>, tool:<name>, or compose:<name>', { required: true }),
+      capability: string('Capability id, lowercase dotted, e.g. code.change', { required: true }),
+      statement: string('One falsifiable sentence: what is promised under which conditions', { required: true }),
+      qos: OBJECT({
+        minQuality: number('minimum absolute quality 0..1'),
+        maxLatencyMs: number('latency ceiling in milliseconds'),
+        requiredFormat: string('required output format: text, markdown, json, diff'),
+        maxCostUsd: number('cost ceiling'),
+      }, false),
+      assessment: OBJECT({
+        policy: string('assessment level policy', { enum: ['L0', 'L1', 'L2', 'L3', 'auto'] }),
+        sampleRate: number('L2 sampling rate 0..1'),
+        passThreshold: number('noul threshold for fulfilled'),
+        failThreshold: number('noul threshold for violated'),
+        minConfidence: number('minimum semantic confidence'),
+      }, false),
+      requirements: {
+        type: 'array',
+        description: 'Concrete acceptance criteria; used for requirement-level attribution',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: string('short id', { required: true }),
+            text: string('what must be true', { required: true }),
+          },
+        },
+      },
+      rules: {
+        type: 'array',
+        description: 'Structural rules: files-within, diff-touches, max-files, no-match, required-sections, json-schema, tool-ok, max-latency, min-bytes',
+        items: { type: 'object', additionalProperties: true },
+      },
+      checks: {
+        type: 'array',
+        description: 'Commands the host runs at settlement to falsify the promise. Inert unless the operator opts in.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: string('check id', { required: true }),
+            run: string('shell command', { required: true }),
+            source: string('model or config', { enum: ['model', 'config'] }),
+            timeoutMs: integer('timeout in milliseconds'),
+          },
+        },
+      },
+      signals: OBJECT({
+        tool: stringArray('tool names whose calls are evidence for this promise', 'tool name'),
+      }, false),
+      status: string('draft keeps the promise out of routing', { enum: ['active', 'draft'] }),
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          promiseId: string('promise id', { required: true }),
+          version: integer('version', { required: true }),
+          status: string('status', { required: true }),
+          warnings: { ...stringArray('declaration warnings'), required: true },
+          text: string('human-readable summary', { required: true }),
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: `Declare promise ${args.capability}`,
+      kind: 'other',
+      rawInput: { agent: args.agent, capability: args.capability },
+    }),
+    presentResult: (_args, value) => ({
+      card: 'generic',
+      title: `Promise v${value.version} ${value.status}`,
+      content: [{ type: 'text', text: value.text }],
+    }),
+    execute(args, exec) {
+      const { promise, warnings } = engine.declare(args, { declaredBy: 'agent' })
+      const text = `promise ${promise.id} v${promise.version} (${promise.status}) for ${promise.agent} · ${promise.capability}`
+        + (warnings.length > 0 ? `\nwarnings:\n- ${warnings.join('\n- ')}` : '')
+      return Promise.resolve({ promiseId: promise.id, version: promise.version, status: promise.status, warnings, text })
+    },
+  })
+
+  const select = defineTool({
+    name: 'promise_select',
+    description: 'Match a task to the best-evidenced promise for a capability. Returns a ranked shortlist with the reasons behind each rank, a job id, and the assessment level policy chose. Call this before delegating substantive work; then invoke the recommended agent and settle the job afterwards.',
+    parameters: {
+      capability: string('Capability required by the task', { required: true }),
+      need: string('What the task needs, in one or two sentences', { required: true }),
+      constraints: OBJECT({
+        maxLatencyMs: number('hard latency budget'),
+        minQuality: number('minimum acceptable trust lower bound'),
+        requiredFormat: string('required output format'),
+      }, false),
+      riskTier: integer('0 read-only, 1 local write, 2 external effect, 3 irreversible'),
+      reversible: { type: 'boolean', description: 'Whether the effect can be undone' },
+      value: string('low or high value output', { enum: ['low', 'high'] }),
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          jobId: string('job id, empty when nothing is eligible', { required: true }),
+          hasCandidate: { type: 'boolean', required: true },
+          promiseId: string('recommended promise id'),
+          agent: string('recommended agent'),
+          capability: string('capability'),
+          trust: number('recommended trust'),
+          lower: number('recommended trust lower bound'),
+          level: integer('planned assessment level', { required: true }),
+          levelReasons: { ...stringArray('why this level'), required: true },
+          candidates: { type: 'array', items: candidateSchema, required: true },
+          guidance: string('next step'),
+          text: string('human-readable summary', { required: true }),
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: `Select promise for ${args.capability}`,
+      kind: 'other',
+      rawInput: { capability: args.capability, riskTier: args.riskTier },
+    }),
+    presentResult: (_args, value) => ({
+      card: 'generic',
+      title: value.hasCandidate ? `Recommended ${value.agent}` : 'No eligible promise',
+      content: [{ type: 'text', text: value.text }],
+    }),
+    execute(args, exec) {
+      const context = contextOf(exec)
+      const result = engine.select(args, context)
+      const lines = []
+      if (!result.hasCandidate && result.candidates.length === 0) {
+        lines.push(result.guidance ?? 'no eligible promise')
+      } else {
+        lines.push(`job ${result.jobId} · level L${result.level} (${result.levelReasons.join('; ')})`)
+        for (const candidate of result.candidates) {
+          const marker = candidate.promiseId === result.recommended?.promiseId ? '*' : ' '
+          lines.push(`${marker} ${candidate.agent} · ${candidate.capability} · trust ${candidate.trust.toFixed(2)} (lower ${candidate.lower.toFixed(2)}, ${candidate.count} assessments)`)
+          for (const reason of candidate.reasons) lines.push(`    - ${reason}`)
+        }
+        if (result.guidance) lines.push(result.guidance)
+      }
+      return Promise.resolve({
+        jobId: result.jobId,
+        hasCandidate: Boolean(result.recommended),
+        promiseId: result.recommended?.promiseId,
+        agent: result.recommended?.agent,
+        capability: args.capability,
+        trust: result.recommended?.trust,
+        lower: result.recommended?.lower,
+        level: result.level,
+        levelReasons: result.levelReasons,
+        candidates: result.candidates.map((candidate) => ({
+          promiseId: candidate.promiseId,
+          agent: candidate.agent,
+          capability: candidate.capability,
+          trust: Number(candidate.trust.toFixed(3)),
+          lower: Number(candidate.lower.toFixed(3)),
+          mass: Number(candidate.mass.toFixed(2)),
+          count: candidate.count,
+          score: candidate.score,
+          reasons: candidate.reasons,
+        })),
+        guidance: result.guidance,
+        text: lines.join('\n'),
+      })
+    },
+  })
+
+  const settle = defineTool({
+    name: 'promise_settle',
+    description: 'Settle a promise job after the work finishes: run the declared checks, evaluate the output at the planned assessment level, update trust, and apply breach policy. Pass the job id from promise_select. Trust only changes through settlement; never claim reliability without it.',
+    parameters: {
+      jobId: string('Job id returned by promise_select', { required: true }),
+      outcome: string('Whether the execution completed', { required: true, enum: ['success', 'failure'] }),
+      output: string('The produced output (diff, report, JSON). Falls back to the collected assistant text.'),
+      latencyMs: number('Observed latency in milliseconds'),
+      promiseId: string('Override the promise if you picked a different candidate than recommended'),
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          jobId: string('job id', { required: true }),
+          verdict: string('fulfilled, violated or undetermined', { required: true }),
+          level: integer('assessment level', { required: true }),
+          confidence: number('confidence'),
+          failureMode: string('failure attribution'),
+          unmetRequirement: string('which requirement was unmet'),
+          rationale: string('why this verdict'),
+          layers: OBJECT({
+            absolute: number('0..1'),
+            relative: number('0..1'),
+            process: number('0..1'),
+            inputQuality: number('0..1'),
+          }, false),
+          trust: OBJECT({
+            before: number('trust before'),
+            score: number('trust after'),
+            delta: number('change'),
+            lower: number('lower bound after'),
+            mass: number('evidence mass after'),
+            count: integer('assessments after'),
+            evidenceWeight: number('weight of this evidence'),
+          }, false),
+          breach: OBJECT({
+            action: string('none, probation or suspend'),
+            reason: string('why'),
+          }, false),
+          recovery: OBJECT({
+            action: string('probation-progress or restored'),
+            passes: integer('consecutive passes'),
+          }, false),
+          rules: { type: 'array', items: { type: 'object', additionalProperties: true } },
+          note: string('extra context'),
+          text: string('human-readable summary', { required: true }),
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: 'Settle promise job',
+      kind: 'other',
+      rawInput: { jobId: args.jobId },
+    }),
+    presentResult: (_args, value) => ({
+      card: 'generic',
+      title: `Settlement: ${value.verdict}`,
+      content: [{ type: 'text', text: value.text }],
+    }),
+    async execute(args, exec) {
+      const context = contextOf(exec)
+      const result = await engine.settle(args, context)
+      const lines = [
+        `job ${result.jobId} · ${result.verdict ?? 'undetermined'} · L${result.level ?? '?'}${result.confidence != null ? ` · confidence ${result.confidence}` : ''}`,
+      ]
+      if (result.layers && Object.values(result.layers).some((value) => value != null)) {
+        const parts = []
+        if (result.layers.absolute != null) parts.push(`absolute ${result.layers.absolute.toFixed(2)}`)
+        if (result.layers.relative != null) parts.push(`relative ${result.layers.relative.toFixed(2)}`)
+        if (result.layers.process != null) parts.push(`process ${result.layers.process.toFixed(2)}`)
+        lines.push(parts.join(' · '))
+      }
+      if (result.failureMode && result.failureMode !== 'none') lines.push(`failure mode: ${result.failureMode}`)
+      if (result.unmetRequirement && result.unmetRequirement !== 'none') lines.push(`unmet requirement: ${result.unmetRequirement}`)
+      if (result.rationale) lines.push(result.rationale)
+      if (result.trust) lines.push(`trust ${result.trust.before ?? '?'} → ${result.trust.score} (${result.trust.count} assessments, mass ${result.trust.mass})`)
+      if (result.breach && result.breach.action !== 'none') lines.push(`breach action: ${result.breach.action} — ${result.breach.reason}`)
+      if (result.recovery) lines.push(`probation ${result.recovery.action} (${result.recovery.passes})`)
+      if (result.note) lines.push(result.note)
+      return { ...result, text: lines.join('\n') }
+    },
+  })
+
+  const inspect = defineTool({
+    name: 'promise_inspect',
+    description: 'Read the promise ledger: trust per agent and capability (with evidence mass), declarations, breach history, or a summary. Trust numbers are meaningless without their evidence count and assessor, so read the whole row.',
+    parameters: {
+      what: string('What to inspect', { enum: ['summary', 'trust', 'promise', 'breach', 'ledger'] }),
+      agent: string('Filter by agent id'),
+      capability: string('Filter by capability'),
+      limit: integer('Maximum rows (1-100)'),
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          what: string('what was inspected', { required: true }),
+          text: string('human-readable report', { required: true }),
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+    },
+    presentCall: (args) => ({ card: 'generic', title: `Inspect ${args.what ?? 'summary'}`, kind: 'read' }),
+    presentResult: (_args, value) => ({
+      card: 'generic',
+      title: `Promise ${value.what}`,
+      content: [{ type: 'text', text: value.text }],
+    }),
+    execute(args) {
+      const result = engine.inspect(args)
+      return Promise.resolve({ what: result.what, text: result.text })
+    },
+  })
+
+  const compose = defineTool({
+    name: 'promise_compose',
+    description: 'Declare a superagent: several child agents behind one external promise. The composition gets its own promise record and its own trust; child health is reported only as a labelled estimate. Replace children later without changing what callers rely on.',
+    parameters: {
+      name: string('Composition name', { required: true }),
+      external: {
+        type: 'object',
+        additionalProperties: false,
+        required: true,
+        properties: {
+          capability: string('capability the composition promises', { required: true }),
+          statement: string('the external promise', { required: true }),
+          qos: OBJECT({
+            minQuality: number('minimum quality'),
+            maxLatencyMs: number('latency ceiling'),
+            requiredFormat: string('required format'),
+          }, false),
+          requirements: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: string('id', { required: true }),
+                text: string('text', { required: true }),
+              },
+            },
+          },
+        },
+      },
+      children: {
+        type: 'array',
+        description: 'Child agents and the capability each contributes',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            agent: string('child agent id', { required: true }),
+            capability: string('child capability', { required: true }),
+            weight: number('relative weight'),
+          },
+        },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          compositionId: string('composition id', { required: true }),
+          externalPromiseId: string('external promise id', { required: true }),
+          health: OBJECT({
+            estimate: { type: 'boolean' },
+            score: number('estimate'),
+            weakest: number('weakest child lower bound'),
+            evidenceMass: number('rolled-up evidence mass'),
+            note: string('disclaimer'),
+          }, false),
+          warnings: { ...stringArray('declaration warnings'), required: true },
+          text: string('human-readable summary', { required: true }),
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+    },
+    presentCall: (args) => ({ card: 'generic', title: `Compose ${args.name}`, kind: 'other' }),
+    presentResult: (_args, value) => ({
+      card: 'generic',
+      title: `Composition ${value.compositionId}`,
+      content: [{ type: 'text', text: value.text }],
+    }),
+    execute(args) {
+      const result = engine.compose(args)
+      const health = result.health
+      const text = `composition ${result.composition.id} · external promise ${result.externalPromise.id}\n`
+        + `children: ${result.composition.children.map((child) => `${child.agent}(${child.capability})`).join(', ') || 'none'}\n`
+        + `health estimate ${health.score.toFixed(2)} (weakest ${health.weakest.toFixed(2)}, mass ${health.evidenceMass.toFixed(1)}) — ${health.note}`
+      return Promise.resolve({
+        compositionId: result.composition.id,
+        externalPromiseId: result.externalPromise.id,
+        health,
+        warnings: result.warnings,
+        text,
+      })
+    },
+  })
+
+  return [declare, select, settle, inspect, compose]
+}

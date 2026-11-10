@@ -2,7 +2,7 @@
 
 > 目标：把 `promise-agent.md` 里那套「承诺—评估—信任」范式，落成 DeepSeek Harness（DSH）上可运行、可审计、可关闭的插件。
 > 定位：**不是又一个编排器**，而是给 DSH 已有的委派行为加一层「可问责的信任基础设施」。
-> 状态：设计稿，待确认后再动手实现。
+> 状态：设计稿 + P0 实现，实现见 [`packages/dsh-promise`](packages/dsh-promise/README.md)。
 
 ---
 
@@ -345,10 +345,10 @@ POST https://api.typesafe.ai/v1/systemone
       "instructions": "Does `output` actually implement what `request` asked for?",
       "criteria": { "true": "The requested behavior is present in the artifact", "false": "Missing, partial, or unrelated" }
     },
-    "claims_supported": {
+    "claims_contradicted": {
       "type": "noul",
-      "instructions": "Are the claims the agent makes about its work supported by `evidence` and `output`?",
-      "criteria": { "true": "Each claim is traceable to evidence", "false": "At least one claim is unsupported or contradicted" }
+      "instructions": "Does any item in `evidence` contradict a factual claim the agent makes in `output` about its work? Answer false when `evidence` is empty.",
+      "criteria": { "true": "At least one factual claim is contradicted by evidence", "false": "No factual claim is contradicted" }
     },
     "absolute_quality": {
       "type": "score",
@@ -402,8 +402,8 @@ relative = clamp(0.5 + (absolute - baseline) / 2, 0, 1)       // 0.5 = 符合该
 
 ```
 rules violated                                  → violated (conf 1.0)
-p_addr ≥ 0.70 ∧ p_claim ≥ 0.60                  → fulfilled
-p_addr ≤ 0.30                                    → violated
+p_addr ≥ 0.70 ∧ p_contradicted ≤ 0.30           → fulfilled
+p_addr ≤ 0.30 ∨ p_contradicted ≥ 0.70            → violated
 p_addr ∈ (0.30, 0.70) 或 两次采样跨阈值           → undetermined（不更新信任，证据缺口 +1）
 ```
 
@@ -685,7 +685,7 @@ promise_compose({
 
 ## E.4 由此对设计做的修正
 
-1. **原子化提问**：不再问「是否兑现」这种复合问题，改问 `addresses_request` / `claims_supported`，复合判断交引擎。
+1. **原子化提问**：不再问「是否兑现」这种复合问题，改问 `addresses_request` / `claims_contradicted`，复合判断交引擎。
 2. **相对表现改基线法**：删除 `expected_quality` 反事实问题，`relative = f(absolute, capability, input_quality_bucket)`，基线从账本历史取中位数。
 3. **条款归因**：`unmet_requirement` 让每次评估能回答「哪条承诺没兑现」。实测比「哪条证据最决定性」可靠得多（0.94/conf 0.91 vs 0.47/conf 0.28）。
 4. **Assessor 接口**：Jev 只是默认实现，不是唯一实现。
@@ -1146,3 +1146,15 @@ jev:
   onOversize: 'truncate-retry' # 400 max_tokens_exceeded → 截到 16KB 重试一次，再失败记 undetermined
   boundaryResample: true       # p ∈ [0.55, 0.85] 时再采一次
 ```
+
+
+## F.5 实现期补充发现（P0 实测）
+
+| 发现 | 证据 | 设计后果 |
+|---|---|---|
+| `claims_supported` 问法有系统性偏差 | 空 evidence 时仍给 0.10–0.16，把「无证据可查」误判成「不被支持」 | 改为 `claims_contradicted`（答案 false 表示无矛盾）；实测：矛盾证据 0.98、空 evidence 0.05 |
+| 承诺文本本身就是契约 | 同一份好输出：statement 写 "sourced brief" 时 p=0.55；改成 "summarize the three risks" 后 p=0.92 | statement 必须精确；模糊承诺会压低兑现判定（这是正确行为，不是缺陷） |
+| 证据存在与否显著改变 p | 同一份正确 diff：无证据 p=0.66；有 tests/scope 证据 p=0.83 | 没有 rules/checks 的承诺只会得到 `undetermined`；文档必须这样写 |
+| 双采样「跨阈值」不等于不稳定 | 0.69 与 0.71 跨过 0.70，但差距只有噪声 | `unstable` 只在两次相差 ≥ 0.15 时成立；否则用均值裁决 |
+| score 的 confidence 偏低 | 正确 diff 的 absolute 3.4/4 只有 conf 0.25 | 只做权重（0.5+0.5c），不做否决；校准报告里的 confidence error 会偏高，属预期 |
+| 3 条样本可跑通校准闭环 | `examples/calibration-sample.jsonl`：accuracy 1.0、κ 1、false-pass 0（仅作格式演示） | 真实门槛仍需 100 条人工标注 |
